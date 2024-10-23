@@ -24,7 +24,7 @@ function CSVUploader({ onDataParsed }) {
     <div>
       <input type="file" accept=".csv" onChange={handleFileChange} />
       <button onClick={handleUpload} disabled={!file}>
-        Upload CSV
+        Read CSV
       </button>
     </div>
   );

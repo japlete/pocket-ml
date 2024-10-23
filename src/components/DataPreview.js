@@ -30,7 +30,6 @@ function DataPreview({ data, columns }) {
 
   return (
     <div>
-      <h2>Data Preview</h2>
       <table>
         <thead>
           <tr>
