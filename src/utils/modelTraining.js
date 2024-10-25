@@ -59,9 +59,6 @@ function calculateROCAUC(actual, predicted) {
       tpr.push(tprValue);
       fpr.push(fprValue);
 
-      if (index % 10 === 0) {  // Log every 10th value to avoid console clutter
-        console.log(`ROC AUC - Threshold: ${threshold.toFixed(2)}, TP: ${tp}, FN: ${fn}, FP: ${fp}, TN: ${tn}, TPR: ${tprValue.toFixed(4)}, FPR: ${fprValue.toFixed(4)}`);
-      }
     });
 
     // Sort FPR and TPR arrays together, with FPR in ascending order
@@ -75,7 +72,6 @@ function calculateROCAUC(actual, predicted) {
       auc += (sortedFPR[i] - sortedFPR[i - 1]) * (sortedTPR[i] + sortedTPR[i - 1]) / 2;
     }
 
-    console.log(`ROC AUC final value: ${auc}`);
     return auc;
   });
 }
@@ -115,9 +111,6 @@ function calculatePRAUC(actual, predicted) {
       precision.push(precisionValue);
       recall.push(recallValue);
 
-      if (index % 10 === 0) {  // Log every 10th value to avoid console clutter
-        console.log(`PR AUC - Threshold: ${threshold.toFixed(2)}, TP: ${tp}, FP: ${fp}, FN: ${fn}, Precision: ${precisionValue.toFixed(4)}, Recall: ${recallValue.toFixed(4)}`);
-      }
     });
 
     // Sort Recall and Precision arrays together, with Recall in descending order
@@ -131,12 +124,33 @@ function calculatePRAUC(actual, predicted) {
       auc += (sortedRecall[i - 1] - sortedRecall[i]) * (sortedPrecision[i] + sortedPrecision[i - 1]) / 2;
     }
 
-    console.log(`PR AUC final value: ${auc}`);
     return auc;
   });
 }
 
-export async function trainModel(trainData, validationData, testData, targetColumn, featureColumns, scaler, targetType, classMapping, onProgressUpdate, primaryMetric, secondaryMetrics = []) {
+// Custom Callback class for logging
+class LoggingCallback extends tf.Callback {
+  constructor(onProgressUpdate, totalEpochs) {
+    super();
+    this.onProgressUpdate = onProgressUpdate;
+    this.totalEpochs = totalEpochs;
+  }
+
+  async onEpochEnd(epoch, logs) {
+    const lossValue = logs.loss !== undefined ? 
+      (logs.loss instanceof tf.Tensor ? logs.loss.dataSync()[0].toFixed(4) : logs.loss.toFixed(4)) : 
+      'N/A';
+    const valLossValue = logs.val_loss !== undefined ? 
+      (logs.val_loss instanceof tf.Tensor ? logs.val_loss.dataSync()[0].toFixed(4) : logs.val_loss.toFixed(4)) : 
+      'N/A';
+
+    console.log(`Epoch ${epoch + 1}: loss = ${lossValue}, val_loss = ${valLossValue}`);
+    this.onProgressUpdate(epoch + 1, this.totalEpochs);
+  }
+}
+
+export async function trainModel(trainData, validationData, testData, targetColumn, featureColumns, targetType, classMapping, onProgressUpdate, 
+  primaryMetric, secondaryMetrics, seed, learning_rate, l1_penalty, dropout_rate, batchSize, max_epochs, earlyStoppingEnabled, autoHiddenDim, hiddenDimInput) {
   console.log('Starting model training...');
   console.log('Target type:', targetType);
   console.log('Class mapping:', classMapping);
@@ -167,26 +181,64 @@ export async function trainModel(trainData, validationData, testData, targetColu
   console.log('testX:', testX.shape);
   console.log('testY:', testY.shape);
 
-  // Create the model
-  const model = tf.sequential();
-  model.add(tf.layers.dense({ units: 64, activation: 'relu', inputShape: [featureColumns.length] }));
-  model.add(tf.layers.dense({ units: 32, activation: 'relu' }));
-
-  // Add the output layer based on the target type
-  if (targetType === 'regression') {
-    model.add(tf.layers.dense({ units: 1 }));
-  } else if (targetType === 'binary') {
-    model.add(tf.layers.dense({ units: 1, activation: 'sigmoid' }));
-  } else if (targetType === 'multiclass') {
-    const numClasses = Object.keys(classMapping).length;
-    model.add(tf.layers.dense({ units: numClasses, activation: 'softmax' }));
+  // Create the model. Determine first hidden layer size
+  const hidden_dim = autoHiddenDim ? 2 ** Math.ceil(Math.log2(Math.ceil((trainX.shape[0] / trainX.shape[1]) ** 0.4))) : hiddenDimInput;
+  console.log('First hidden layer size:', hidden_dim);
+  const input = tf.input({shape: [featureColumns.length]});
+  let first_layer_args = {units: hidden_dim, activation: 'gelu_new'};
+  // Add L1 regularization if specified
+  if (l1_penalty) {
+    first_layer_args = {
+      ...first_layer_args,
+      kernelRegularizer: tf.regularizers.l1({l1: l1_penalty})
+    };
+  }
+  const dense1 = tf.layers.dense(first_layer_args).apply(input);
+  let residual_concat = [input, dense1];
+  let next_hidden_dim = Math.ceil(hidden_dim / 4);
+  let prev_layer = dense1;
+  // Add more layers with decreasing size up to a minimum of 2 units
+  while (next_hidden_dim >= 2) {
+    // Add dropout after each dense layer if specified
+    if (dropout_rate) {
+      const dropout = tf.layers.dropout({rate: dropout_rate, seed: seed+next_hidden_dim}).apply(prev_layer);
+      prev_layer = dropout;
+    }
+    const dense = tf.layers.dense({units: next_hidden_dim, activation: 'gelu_new'}).apply(prev_layer);
+    prev_layer = dense;
+    residual_concat.push(dense);
+    console.log('Added hidden layer of size:', next_hidden_dim);
+    next_hidden_dim = Math.ceil(next_hidden_dim / 4);
+  }
+  
+  // Add skip connections by concatenating the outputs of all dense layers
+  const concatenated = tf.layers.concatenate().apply(residual_concat);
+  let last_layer = concatenated;
+  if (dropout_rate) {
+    const dropout = tf.layers.dropout({rate: dropout_rate, seed: seed+next_hidden_dim}).apply(last_layer);
+    last_layer = dropout;
   }
 
+  // Add the output layer based on the target type
+  let output;
+  if (targetType === 'regression') {
+    output = tf.layers.dense({units: 1}).apply(last_layer);
+  } else if (targetType === 'binary') {
+    output = tf.layers.dense({units: 1, activation: 'sigmoid'}).apply(last_layer);
+  } else if (targetType === 'multiclass') {
+    const numClasses = Object.keys(classMapping).length;
+    output = tf.layers.dense({units: numClasses, activation: 'softmax'}).apply(last_layer);
+  }
+
+  const model = tf.model({inputs: input, outputs: output});
+
+  // Print model summary and backend
+  console.log("Current backend:", tf.getBackend());
   console.log('Model summary:');
   model.summary();
 
   // Compile the model
-  const optimizer = tf.train.adam();
+  const optimizer = tf.train.adam(learning_rate);
   let loss, metrics;
   const allMetrics = [primaryMetric, ...secondaryMetrics];
 
@@ -225,20 +277,25 @@ export async function trainModel(trainData, validationData, testData, targetColu
     }).filter(Boolean);
   }
   model.compile({ optimizer, loss, metrics });
-
   console.log('Model compiled with loss:', loss, 'and metrics:', metrics);
 
+  // Set up callbacks during training
+  const loggingCallback = new LoggingCallback(onProgressUpdate, max_epochs);
+  const callbacks = [loggingCallback];
+  if (earlyStoppingEnabled) {
+    const earlyStoppingCallback = tf.callbacks.earlyStopping({
+      monitor: 'val_loss',
+      patience: 3
+    });
+    callbacks.push(earlyStoppingCallback);
+  }
+
   // Train the model
-  const totalEpochs = 50;
   const history = await model.fit(trainX, trainY, {
-    epochs: totalEpochs,
+    epochs: max_epochs,
+    batchSize: batchSize,
     validationData: [validationX, validationY],
-    callbacks: {
-      onEpochEnd: (epoch, logs) => {
-        console.log(`Epoch ${epoch + 1}: loss = ${logs.loss.toFixed(4)}, val_loss = ${logs.val_loss ? logs.val_loss.toFixed(4) : 'N/A'}`);
-        onProgressUpdate(epoch + 1, totalEpochs);
-      }
-    }
+    callbacks: callbacks
   });
 
   console.log('Model training completed.');
@@ -250,6 +307,7 @@ export async function trainModel(trainData, validationData, testData, targetColu
     test: model.evaluate(testX, testY)
   };
 
+  // Gather the metrics
   const results = {};
   ['train', 'validation', 'test'].forEach((set) => {
     const evalTensors = evalResults[set];
@@ -257,13 +315,22 @@ export async function trainModel(trainData, validationData, testData, targetColu
     const [loss, ...metricValues] = evalValues;
     results[`${set}Loss`] = loss;
 
-    allMetrics.forEach((metric, index) => {
-      if (metric === 'accuracy') {
-        results[`${set}${metric.toUpperCase()}`] = metricValues[index];
+    const str_metrics = metrics.map(metric => {
+      switch (metric) {
+        case tf.metrics.meanAbsoluteError: return 'mae';
+        case tf.metrics.meanAbsolutePercentageError: return 'mape';
+        case tf.metrics.meanSquaredError: return 'mse';
+        case tf.metrics.r2Score: return 'r2';
+        case tf.metrics.binaryAccuracy: return 'accuracy';
+        case tf.metrics.sparseCategoricalAccuracy: return 'accuracy';
+        default: return null;
       }
     });
+    str_metrics.forEach((metric, index) => {
+      results[`${set}${metric.toUpperCase()}`] = metricValues[index];
+    });
 
-    // Compute custom metrics if requested
+    // Compute custom metrics (not included in TensorFlow.js)
     const predicted = model.predict(eval(set + 'X'));
     const actual = eval(set + 'Y');
 

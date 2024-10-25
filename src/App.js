@@ -26,6 +26,14 @@ function App() {
   const [secondaryMetrics, setSecondaryMetrics] = useState([]);
   const [classDistribution, setClassDistribution] = useState(null);
   const [allowedTargetTypes, setAllowedTargetTypes] = useState([]);
+  const [l1_penalty, setL1Penalty] = useState(0.0);
+  const [dropout_rate, setDropoutRate] = useState(0.1);
+  const [batchSize, setBatchSize] = useState(8);
+  const [epochs, setEpochs] = useState(50);
+  const [earlyStoppingEnabled, setEarlyStoppingEnabled] = useState(true);
+  const [learningRate, setLearningRate] = useState(0.003);
+  const [autoHiddenDim, setAutoHiddenDim] = useState(true);
+  const [hiddenDimInput, setHiddenDimInput] = useState(32);
 
   const handleDataParsed = (data) => {
     setParsedData(data);
@@ -139,14 +147,22 @@ function App() {
         testData,
         targetColumn,
         featureColumns,
-        scaler,
         targetType,
         classMapping,
         (epoch, totalEpochs) => {
           setTrainingProgress(Math.round((epoch / totalEpochs) * 100));
         },
-        primaryMetric, // Ensure primaryMetric is passed
-        secondaryMetrics // Ensure secondaryMetrics is passed
+        primaryMetric,
+        secondaryMetrics,
+        seed,
+        learningRate,
+        l1_penalty,
+        dropout_rate,
+        batchSize,
+        epochs,
+        earlyStoppingEnabled,
+        autoHiddenDim,
+        hiddenDimInput
       );
       setModelResults(results);
       setIsTraining(false);
@@ -212,8 +228,24 @@ function App() {
             onSeedChange={handleSeedChange}
             onPrimaryMetricChange={handlePrimaryMetricChange}
             onSecondaryMetricsChange={handleSecondaryMetricsChange}
+            onL1PenaltyChange={setL1Penalty}
+            onDropoutRateChange={setDropoutRate}
+            onBatchSizeChange={setBatchSize}
+            onEpochsChange={setEpochs}
+            onEarlyStoppingChange={setEarlyStoppingEnabled}
+            onLearningRateChange={setLearningRate}
+            onAutoHiddenDimChange={setAutoHiddenDim}
+            onHiddenDimInputChange={setHiddenDimInput}
+            autoHiddenDim={autoHiddenDim}
+            hiddenDimInput={hiddenDimInput}
             targetType={targetType}
             classDistribution={classDistribution}
+            l1_penalty={l1_penalty}
+            dropout_rate={dropout_rate}
+            batchSize={batchSize}
+            epochs={epochs}
+            earlyStoppingEnabled={earlyStoppingEnabled}
+            learningRate={learningRate}
           />
           <button 
             onClick={handleStartTraining} 
@@ -254,9 +286,20 @@ function App() {
                 const testValue = modelResults[`test${metric.toUpperCase()}`];
                 
                 if (trainValue !== undefined && validationValue !== undefined && testValue !== undefined) {
+                  const formattedMetricName = metric
+                    .split('_')
+                    .map((word, index) => 
+                      index === 0 
+                        ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() 
+                        : ['auc', 'roc', 'pr'].includes(word.toLowerCase()) 
+                          ? word.toUpperCase() 
+                          : word.toLowerCase()
+                    )
+                    .join(' ');
+
                   return (
                     <tr key={metric}>
-                      <td>{metric.toUpperCase()}</td>
+                      <td>{formattedMetricName}</td>
                       <td>{trainValue.toFixed(4)}</td>
                       <td>{validationValue.toFixed(4)}</td>
                       <td>{testValue.toFixed(4)}</td>
