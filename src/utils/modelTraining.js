@@ -1,9 +1,147 @@
 import * as tf from '@tensorflow/tfjs';
 
-export async function trainModel(trainData, validationData, testData, targetColumn, featureColumns, scaler, targetType, classMapping, onProgressUpdate) {
+// Custom metric functions
+function calculateRMSE(actual, predicted) {
+  return tf.sqrt(tf.metrics.mse(actual, predicted)).dataSync()[0];
+}
+
+function calculatePrecision(actual, predicted) {
+  const roundedPredictions = tf.round(predicted);
+  return tf.metrics.precision(actual, roundedPredictions).dataSync()[0];
+}
+
+function calculateRecall(actual, predicted) {
+  const roundedPredictions = tf.round(predicted);
+  return tf.metrics.recall(actual, roundedPredictions).dataSync()[0];
+}
+
+function calculateF1Score(actual, predicted) {
+  const roundedPredictions = tf.round(predicted);
+  const precision = tf.metrics.precision(actual, roundedPredictions).dataSync()[0];
+  const recall = tf.metrics.recall(actual, roundedPredictions).dataSync()[0];
+  return (2 * precision * recall) / (precision + recall);
+}
+
+function calculateROCAUC(actual, predicted) {
+  return tf.tidy(() => {
+    const thresholds = tf.linspace(0, 1, 100);
+    const thresholdsArray = thresholds.arraySync();
+    
+    // Convert actual to boolean tensor
+    const actualBool = actual.greater(0.5);
+    const actualArray = actualBool.arraySync();
+    const predictedArray = predicted.arraySync();
+    
+    const tpr = [];
+    const fpr = [];
+
+    thresholdsArray.forEach((threshold, index) => {
+      let tp = 0, fn = 0, fp = 0, tn = 0;
+      
+      for (let i = 0; i < actualArray.length; i++) {
+        if (actualArray[i]) {
+          if (predictedArray[i] >= threshold) {
+            tp++;
+          } else {
+            fn++;
+          }
+        } else {
+          if (predictedArray[i] >= threshold) {
+            fp++;
+          } else {
+            tn++;
+          }
+        }
+      }
+
+      const tprValue = tp / (tp + fn) || 0;
+      const fprValue = fp / (fp + tn) || 0;
+      tpr.push(tprValue);
+      fpr.push(fprValue);
+
+      if (index % 10 === 0) {  // Log every 10th value to avoid console clutter
+        console.log(`ROC AUC - Threshold: ${threshold.toFixed(2)}, TP: ${tp}, FN: ${fn}, FP: ${fp}, TN: ${tn}, TPR: ${tprValue.toFixed(4)}, FPR: ${fprValue.toFixed(4)}`);
+      }
+    });
+
+    // Sort FPR and TPR arrays together, with FPR in ascending order
+    const sortedPairs = fpr.map((f, index) => [f, tpr[index]]).sort((a, b) => a[0] - b[0]);
+    const sortedFPR = sortedPairs.map(pair => pair[0]);
+    const sortedTPR = sortedPairs.map(pair => pair[1]);
+
+    // Calculate AUC using trapezoidal rule
+    let auc = 0;
+    for (let i = 1; i < sortedFPR.length; i++) {
+      auc += (sortedFPR[i] - sortedFPR[i - 1]) * (sortedTPR[i] + sortedTPR[i - 1]) / 2;
+    }
+
+    console.log(`ROC AUC final value: ${auc}`);
+    return auc;
+  });
+}
+
+function calculatePRAUC(actual, predicted) {
+  return tf.tidy(() => {
+    const thresholds = tf.linspace(0, 1, 100);
+    const thresholdsArray = thresholds.arraySync();
+    
+    // Convert actual to boolean tensor
+    const actualBool = actual.greater(0.5);
+    const actualArray = actualBool.arraySync();
+    const predictedArray = predicted.arraySync();
+    
+    const precision = [];
+    const recall = [];
+
+    thresholdsArray.forEach((threshold, index) => {
+      let tp = 0, fn = 0, fp = 0;
+      
+      for (let i = 0; i < actualArray.length; i++) {
+        if (actualArray[i]) {
+          if (predictedArray[i] >= threshold) {
+            tp++;
+          } else {
+            fn++;
+          }
+        } else {
+          if (predictedArray[i] >= threshold) {
+            fp++;
+          }
+        }
+      }
+
+      const precisionValue = tp / (tp + fp) || 0;
+      const recallValue = tp / (tp + fn) || 0;
+      precision.push(precisionValue);
+      recall.push(recallValue);
+
+      if (index % 10 === 0) {  // Log every 10th value to avoid console clutter
+        console.log(`PR AUC - Threshold: ${threshold.toFixed(2)}, TP: ${tp}, FP: ${fp}, FN: ${fn}, Precision: ${precisionValue.toFixed(4)}, Recall: ${recallValue.toFixed(4)}`);
+      }
+    });
+
+    // Sort Recall and Precision arrays together, with Recall in descending order
+    const sortedPairs = recall.map((r, index) => [r, precision[index]]).sort((a, b) => b[0] - a[0]);
+    const sortedRecall = sortedPairs.map(pair => pair[0]);
+    const sortedPrecision = sortedPairs.map(pair => pair[1]);
+
+    // Calculate AUC using trapezoidal rule
+    let auc = 0;
+    for (let i = 1; i < sortedRecall.length; i++) {
+      auc += (sortedRecall[i - 1] - sortedRecall[i]) * (sortedPrecision[i] + sortedPrecision[i - 1]) / 2;
+    }
+
+    console.log(`PR AUC final value: ${auc}`);
+    return auc;
+  });
+}
+
+export async function trainModel(trainData, validationData, testData, targetColumn, featureColumns, scaler, targetType, classMapping, onProgressUpdate, primaryMetric, secondaryMetrics = []) {
   console.log('Starting model training...');
   console.log('Target type:', targetType);
   console.log('Class mapping:', classMapping);
+  console.log('Primary metric:', primaryMetric);
+  console.log('Secondary metrics:', secondaryMetrics);
 
   // Prepare the data
   const trainX = tf.tensor2d(trainData.map(row => featureColumns.map(col => row[col])));
@@ -29,9 +167,10 @@ export async function trainModel(trainData, validationData, testData, targetColu
   console.log('testX:', testX.shape);
   console.log('testY:', testY.shape);
 
-  // Create the model (1 fixed hidden layer for now)
+  // Create the model
   const model = tf.sequential();
-  model.add(tf.layers.dense({ units: 32, activation: 'relu', inputShape: [featureColumns.length] }));
+  model.add(tf.layers.dense({ units: 64, activation: 'relu', inputShape: [featureColumns.length] }));
+  model.add(tf.layers.dense({ units: 32, activation: 'relu' }));
 
   // Add the output layer based on the target type
   if (targetType === 'regression') {
@@ -49,15 +188,41 @@ export async function trainModel(trainData, validationData, testData, targetColu
   // Compile the model
   const optimizer = tf.train.adam();
   let loss, metrics;
+  const allMetrics = [primaryMetric, ...secondaryMetrics];
+
   if (targetType === 'regression') {
-    loss = 'meanSquaredError';
-    metrics = ['mse'];
+    loss = tf.losses.meanSquaredError;
+    metrics = allMetrics.filter(metric => {
+      return ['mae', 'mape', 'mse', 'r2'].includes(metric);
+    }).map(metric => {
+      switch (metric) {
+        case 'mae': return tf.metrics.meanAbsoluteError;
+        case 'mape': return tf.metrics.meanAbsolutePercentageError;
+        case 'mse': return tf.metrics.meanSquaredError;
+        case 'r2': return tf.metrics.r2Score;
+        default: return null;
+      }
+    }).filter(Boolean);
   } else if (targetType === 'binary') {
     loss = 'binaryCrossentropy';
-    metrics = ['accuracy'];
+    metrics = allMetrics.filter(metric => {
+      return ['accuracy'].includes(metric);
+    }).map(metric => {
+      switch (metric) {
+        case 'accuracy': return tf.metrics.binaryAccuracy;
+        default: return null;
+      }
+    }).filter(Boolean);
   } else if (targetType === 'multiclass') {
     loss = 'sparseCategoricalCrossentropy';
-    metrics = ['accuracy'];
+    metrics = allMetrics.filter(metric => {
+      return ['accuracy'].includes(metric);
+    }).map(metric => {
+      switch (metric) {
+        case 'accuracy': return tf.metrics.sparseCategoricalAccuracy;
+        default: return null;
+      }
+    }).filter(Boolean);
   }
   model.compile({ optimizer, loss, metrics });
 
@@ -79,44 +244,53 @@ export async function trainModel(trainData, validationData, testData, targetColu
   console.log('Model training completed.');
 
   // Evaluate the model
-  console.log('Evaluating the model...');
-  
-  console.log('Train evaluation:');
-  const trainEval = model.evaluate(trainX, trainY);
-  console.log('Train loss:', trainEval[0].dataSync()[0]);
-  console.log('Train metric:', trainEval[1].dataSync()[0]);
+  const evalResults = {
+    train: model.evaluate(trainX, trainY),
+    validation: model.evaluate(validationX, validationY),
+    test: model.evaluate(testX, testY)
+  };
 
-  console.log('Validation evaluation:');
-  const validationEval = model.evaluate(validationX, validationY);
-  console.log('Validation loss:', validationEval[0].dataSync()[0]);
-  console.log('Validation metric:', validationEval[1].dataSync()[0]);
+  const results = {};
+  ['train', 'validation', 'test'].forEach((set) => {
+    const evalTensors = evalResults[set];
+    const evalValues = Array.isArray(evalTensors) ? evalTensors.map(tensor => tensor.dataSync()[0]) : [evalTensors.dataSync()[0]];
+    const [loss, ...metricValues] = evalValues;
+    results[`${set}Loss`] = loss;
 
-  console.log('Test evaluation:');
-  const testEval = model.evaluate(testX, testY);
-  console.log('Test loss:', testEval[0].dataSync()[0]);
-  console.log('Test metric:', testEval[1].dataSync()[0]);
+    allMetrics.forEach((metric, index) => {
+      if (metric === 'accuracy') {
+        results[`${set}${metric.toUpperCase()}`] = metricValues[index];
+      }
+    });
 
-  let results;
-  if (targetType === 'regression') {
-    results = {
-      trainRMSE: Math.sqrt(trainEval[0].dataSync()[0]),
-      validationRMSE: Math.sqrt(validationEval[0].dataSync()[0]),
-      testRMSE: Math.sqrt(testEval[0].dataSync()[0])
-    };
-  } else {
-    results = {
-      trainAccuracy: trainEval[1].dataSync()[0],
-      validationAccuracy: validationEval[1].dataSync()[0],
-      testAccuracy: testEval[1].dataSync()[0]
-    };
-  }
+    // Compute custom metrics if requested
+    const predicted = model.predict(eval(set + 'X'));
+    const actual = eval(set + 'Y');
 
-  console.log('Final results:', results);
+    if (allMetrics.includes('rmse') && !results[`${set}RMSE`]) {
+      results[`${set}RMSE`] = calculateRMSE(actual, predicted);
+    }
 
-  // Log the final losses
-  console.log('Final losses:');
-  console.log('Train loss:', history.history.loss[history.history.loss.length - 1]);
-  console.log('Validation loss:', history.history.val_loss ? history.history.val_loss[history.history.val_loss.length - 1] : 'N/A');
+    if (targetType === 'binary') {
+      if (allMetrics.includes('precision')) {
+        results[`${set}PRECISION`] = calculatePrecision(actual, predicted);
+      }
+      if (allMetrics.includes('recall')) {
+        results[`${set}RECALL`] = calculateRecall(actual, predicted);
+      }
+      if (allMetrics.includes('f1')) {
+        results[`${set}F1`] = calculateF1Score(actual, predicted);
+      }
+      if (allMetrics.includes('roc_auc')) {
+        results[`${set}ROC_AUC`] = calculateROCAUC(actual, predicted);
+      }
+      if (allMetrics.includes('pr_auc')) {
+        results[`${set}PR_AUC`] = calculatePRAUC(actual, predicted);
+      }
+    }
+
+    predicted.dispose(); // Dispose of the predicted tensor
+  });
 
   // Clean up memory
   trainX.dispose();
@@ -128,9 +302,4 @@ export async function trainModel(trainData, validationData, testData, targetColu
   model.dispose();
 
   return results;
-}
-
-function calculateRMSE(actual, predicted) {
-  const mse = tf.losses.meanSquaredError(actual, predicted);
-  return Math.sqrt(mse.dataSync()[0]);
 }

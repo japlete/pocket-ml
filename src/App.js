@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import CSVUploader from './components/CSVUploader.js';
 import DataPreview from './components/DataPreview.js';
 import TargetSelector from './components/TargetSelector.js';
@@ -22,6 +22,10 @@ function App() {
   const [trainingProgress, setTrainingProgress] = useState(0);
   const [splitRatios, setSplitRatios] = useState({ train: 0.7, validation: 0.2, test: 0.1 });
   const [seed, setSeed] = useState(42);
+  const [primaryMetric, setPrimaryMetric] = useState(targetType === 'regression' ? 'rmse' : 'roc_auc');
+  const [secondaryMetrics, setSecondaryMetrics] = useState([]);
+  const [classDistribution, setClassDistribution] = useState(null);
+  const [allowedTargetTypes, setAllowedTargetTypes] = useState([]);
 
   const handleDataParsed = (data) => {
     setParsedData(data);
@@ -53,20 +57,47 @@ function App() {
     const isNumeric = uniqueValues.every(value => typeof value === 'number' && !isNaN(value));
 
     let detectedType;
+    let allowedTypes = [];
+
     if (isNumeric) {
       if (uniqueValues.length === 2) {
         detectedType = 'binary';
+        allowedTypes = ['binary', 'regression'];
       } else if (uniqueValues.length >= 3 && uniqueValues.length <= 10) {
         detectedType = 'multiclass';
+        allowedTypes = ['multiclass', 'regression'];
       } else {
         detectedType = 'regression';
+        allowedTypes = ['regression'];
       }
     } else {
-      detectedType = uniqueValues.length === 2 ? 'binary' : 'multiclass';
+      if (uniqueValues.length === 2) {
+        detectedType = 'binary';
+        allowedTypes = ['binary'];
+      } else {
+        detectedType = 'multiclass';
+        allowedTypes = ['multiclass'];
+      }
     }
 
     setSuggestedTargetType(detectedType);
     setTargetType(detectedType);
+    setAllowedTargetTypes(allowedTypes);
+
+    // Compute class distribution for classification problems
+    if (detectedType !== 'regression') {
+      const distribution = values.reduce((acc, val) => {
+        acc[val] = (acc[val] || 0) + 1;
+        return acc;
+      }, {});
+      const total = Object.values(distribution).reduce((sum, count) => sum + count, 0);
+      const normalizedDistribution = Object.fromEntries(
+        Object.entries(distribution).map(([key, value]) => [key, value / total])
+      );
+      setClassDistribution(normalizedDistribution);
+    } else {
+      setClassDistribution(null);
+    }
   };
 
   const checkTargetColumnValidity = (column) => {
@@ -102,9 +133,21 @@ function App() {
       setProcessedData({ trainData, validationData, testData, updatedColumns });
 
       const featureColumns = updatedColumns.filter(col => col !== targetColumn);
-      const results = await trainModel(trainData, validationData, testData, targetColumn, featureColumns, scaler, targetType, classMapping, (epoch, totalEpochs) => {
-        setTrainingProgress(Math.round((epoch / totalEpochs) * 100));
-      });
+      const results = await trainModel(
+        trainData,
+        validationData,
+        testData,
+        targetColumn,
+        featureColumns,
+        scaler,
+        targetType,
+        classMapping,
+        (epoch, totalEpochs) => {
+          setTrainingProgress(Math.round((epoch / totalEpochs) * 100));
+        },
+        primaryMetric, // Ensure primaryMetric is passed
+        secondaryMetrics // Ensure secondaryMetrics is passed
+      );
       setModelResults(results);
       setIsTraining(false);
     }
@@ -120,6 +163,14 @@ function App() {
     setMissingValueCount(0);
     setUniqueValueCount(0);
     setIsTraining(false);
+  };
+
+  const handlePrimaryMetricChange = (metric) => {
+    setPrimaryMetric(metric);
+  };
+
+  const handleSecondaryMetricsChange = (metrics) => {
+    setSecondaryMetrics(metrics);
   };
 
   const columns = parsedData ? Object.keys(parsedData[0]) : [];
@@ -151,6 +202,7 @@ function App() {
                   targetType={targetType}
                   suggestedType={suggestedTargetType}
                   onTargetTypeChange={handleTargetTypeChange}
+                  allowedTypes={allowedTargetTypes}
                 />
               )}
             </>
@@ -158,6 +210,10 @@ function App() {
           <AdvancedSettings
             onSplitChange={handleSplitChange}
             onSeedChange={handleSeedChange}
+            onPrimaryMetricChange={handlePrimaryMetricChange}
+            onSecondaryMetricsChange={handleSecondaryMetricsChange}
+            targetType={targetType}
+            classDistribution={classDistribution}
           />
           <button 
             onClick={handleStartTraining} 
@@ -176,19 +232,41 @@ function App() {
       {!isTraining && modelResults && (
         <div>
           <h2>Model Results</h2>
-          {targetType === 'regression' ? (
-            <>
-              <p>Train RMSE: {modelResults.trainRMSE.toFixed(4)}</p>
-              <p>Validation RMSE: {modelResults.validationRMSE.toFixed(4)}</p>
-              <p>Test RMSE: {modelResults.testRMSE.toFixed(4)}</p>
-            </>
-          ) : (
-            <>
-              <p>Train Accuracy: {(modelResults.trainAccuracy * 100).toFixed(2)}%</p>
-              <p>Validation Accuracy: {(modelResults.validationAccuracy * 100).toFixed(2)}%</p>
-              <p>Test Accuracy: {(modelResults.testAccuracy * 100).toFixed(2)}%</p>
-            </>
-          )}
+          <table className="results-table">
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th>Train</th>
+                <th>Validation</th>
+                <th>Test</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Loss</td>
+                <td>{modelResults.trainLoss.toFixed(4)}</td>
+                <td>{modelResults.validationLoss.toFixed(4)}</td>
+                <td>{modelResults.testLoss.toFixed(4)}</td>
+              </tr>
+              {[primaryMetric, ...secondaryMetrics].map((metric) => {
+                const trainValue = modelResults[`train${metric.toUpperCase()}`];
+                const validationValue = modelResults[`validation${metric.toUpperCase()}`];
+                const testValue = modelResults[`test${metric.toUpperCase()}`];
+                
+                if (trainValue !== undefined && validationValue !== undefined && testValue !== undefined) {
+                  return (
+                    <tr key={metric}>
+                      <td>{metric.toUpperCase()}</td>
+                      <td>{trainValue.toFixed(4)}</td>
+                      <td>{validationValue.toFixed(4)}</td>
+                      <td>{testValue.toFixed(4)}</td>
+                    </tr>
+                  );
+                }
+                return null;
+              })}
+            </tbody>
+          </table>
         </div>
       )}
       {processedData && (
