@@ -9,4 +9,4 @@ This project is in early development. Current functionality includes:
 - CSV file upload and parsing
 - Basic data preprocessing (categorical feature encoding, missing value imputation, scaling)
 - Training a regression or classification model
-- Displaying basic model performance metrics (RMSE or accuracy)
+- Displaying some performance metrics
