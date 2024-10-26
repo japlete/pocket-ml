@@ -1,7 +1,7 @@
 import React from 'react';
 import _ from 'lodash';
 
-function DataPreview({ data, columns }) {
+function DataPreview({ data, columns, showDownload = false, originalFileName = '' }) {
   if (!data || data.length === 0) {
     return <p>No data to display</p>;
   }
@@ -28,8 +28,43 @@ function DataPreview({ data, columns }) {
     return value === null ? 'null' : value;
   };
 
+  const handleDownload = () => {
+    // Generate download filename based on original filename if available
+    const downloadFileName = originalFileName ? 
+      originalFileName.replace('.csv', '_preprocessed.csv') : 
+      'preprocessed_data.csv';
+
+    // Convert data to CSV
+    const csvContent = [
+      columns.join(','), // Header row
+      ...data.map(row => columns.map(col => {
+        const value = row[col];
+        // Handle values that might need escaping
+        if (typeof value === 'string' && value.includes(',')) {
+          return `"${value}"`;
+        }
+        return value;
+      }).join(','))
+    ].join('\n');
+
+    // Create and trigger download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', downloadFileName);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
-    <div>
+    <div className="data-preview-container">
+      {showDownload && (
+        <button onClick={handleDownload} className="download-button">
+          Download CSV
+        </button>
+      )}
       <table>
         <thead>
           <tr>

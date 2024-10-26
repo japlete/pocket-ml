@@ -7,6 +7,8 @@ import AdvancedSettings from './components/AdvancedSettings.js';
 import Accordion from './components/Accordion.js';
 import { preprocessData } from './utils/dataPreprocessing.js';
 import { trainModel } from './utils/modelTraining.js';
+import { ModelTrainingManager } from './utils/modelTrainingManager';
+import TuningParameters from './components/TuningParameters';
 import './index.css';
 
 function App() {
@@ -34,9 +36,15 @@ function App() {
   const [learningRate, setLearningRate] = useState(0.003);
   const [autoHiddenDim, setAutoHiddenDim] = useState(true);
   const [hiddenDimInput, setHiddenDimInput] = useState(32);
+  const [fileName, setFileName] = useState('');
+  const [minIterations, setMinIterations] = useState(10);
+  const [maxTrainingTime, setMaxTrainingTime] = useState(30);
+  const [trainingManager, setTrainingManager] = useState(null);
+  const [trainedModels, setTrainedModels] = useState([]);
 
-  const handleDataParsed = (data) => {
+  const handleDataParsed = (data, name) => {
     setParsedData(data);
+    setFileName(name);
     setTargetColumn('');
     setTargetType('');
     setSuggestedTargetType('');
@@ -134,37 +142,42 @@ function App() {
   const handleStartTraining = async () => {
     setIsTraining(true);
     setTrainingProgress(0);
+    
     if (parsedData && targetColumn) {
       const filteredData = parsedData.filter(row => row[targetColumn] !== null && row[targetColumn] !== '');
-      
-      const { trainData, validationData, testData, updatedColumns, scaler, classMapping } = preprocessData(filteredData, targetColumn, targetType, splitRatios, seed);
-      setProcessedData({ trainData, validationData, testData, updatedColumns });
+      const preprocessedData = preprocessData(filteredData, targetColumn, targetType, splitRatios, seed);
+      setProcessedData(preprocessedData);
 
-      const featureColumns = updatedColumns.filter(col => col !== targetColumn);
-      const results = await trainModel(
-        trainData,
-        validationData,
-        testData,
-        targetColumn,
-        featureColumns,
+      const config = {
         targetType,
-        classMapping,
-        (epoch, totalEpochs) => {
-          setTrainingProgress(Math.round((epoch / totalEpochs) * 100));
-        },
         primaryMetric,
-        secondaryMetrics,
-        seed,
+        minIterations,
+        maxTrainingTime,
         learningRate,
-        l1_penalty,
-        dropout_rate,
+        l1Penalty: l1_penalty,
+        dropoutRate: dropout_rate,
         batchSize,
         epochs,
         earlyStoppingEnabled,
         autoHiddenDim,
-        hiddenDimInput
+        hiddenDimInput,
+        seed
+      };
+
+      const manager = new ModelTrainingManager(config);
+      setTrainingManager(manager);
+
+      const results = await manager.startTrainingCycle(
+        preprocessedData.trainData,
+        preprocessedData.validationData,
+        preprocessedData.testData,
+        (epoch, totalEpochs) => {
+          setTrainingProgress(Math.round((epoch / totalEpochs) * 100));
+        }
       );
-      setModelResults(results);
+
+      setTrainedModels(results.trainedModels);
+      setModelResults(results.testMetrics);
       setIsTraining(false);
     }
   };
@@ -196,8 +209,16 @@ function App() {
       <h1>Pocket ML</h1>
       {parsedData && <button onClick={handleReset} className="home-button">Home</button>}
       {!parsedData && <CSVUploader onDataParsed={handleDataParsed} />}
+      
+      {/* Show configuration UI only when data is loaded AND not training/trained */}
       {parsedData && !isTraining && !modelResults && (
         <>
+          <Accordion title="Data Preview" defaultOpen={true}>
+            <DataPreview 
+              data={parsedData} 
+              columns={Object.keys(parsedData[0])}
+            />
+          </Accordion>
           <p>{parsedData.length} rows loaded</p>
           <TargetSelector
             columns={columns}
@@ -221,6 +242,12 @@ function App() {
                   allowedTypes={allowedTargetTypes}
                 />
               )}
+              <TuningParameters
+                maxTrainingTime={maxTrainingTime}
+                onMaxTrainingTimeChange={setMaxTrainingTime}
+                minIterations={minIterations}
+                onMinIterationsChange={setMinIterations}
+              />
             </>
           )}
           <AdvancedSettings
@@ -255,6 +282,8 @@ function App() {
           </button>
         </>
       )}
+
+      {/* Show training progress or results */}
       {isTraining && (
         <div>
           <h2>Model Training</h2>
@@ -313,10 +342,12 @@ function App() {
         </div>
       )}
       {processedData && (
-        <Accordion title="Data Preview (transformed features after preprocessing)">
+        <Accordion title="Preprocessed Data Preview">
           <DataPreview 
             data={processedData.trainData} 
             columns={processedData.updatedColumns}
+            showDownload={true}
+            originalFileName={fileName}
           />
         </Accordion>
       )}

@@ -65,6 +65,7 @@ th {
 .accordion-content {
   padding: 10px;
   border: 1px solid #ddd;
+  overflow-x: auto;  /* Add horizontal scroll when needed */
 }
 
 .results-table {
@@ -91,4 +92,47 @@ th {
 
 .results-table tr:hover {
   background-color: #f5f5f5;
+}
+
+.data-preview-container {
+  position: relative;
+  width: 100%;
+  padding-top: 40px; /* Add space for the download button */
+}
+
+.download-button {
+  position: absolute;
+  top: 0;          /* Changed from 10px to 0 */
+  right: 0;
+  padding: 5px 10px;
+  background-color: #f8f9fa;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  margin: 0;       /* Override default button margin */
+}
+
+.download-button:hover {
+  background-color: #e9ecef;
+}
+
+.tuning-parameters {
+  margin: 20px 0;
+  padding: 15px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background-color: #f8f9fa;
+}
+
+.tuning-parameters div {
+  margin: 10px 0;
+}
+
+.tuning-parameters label {
+  margin-right: 10px;
+  font-weight: bold;
+}
+
+.tuning-parameters input {
+  width: 100px;
 }

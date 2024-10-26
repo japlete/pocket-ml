@@ -12,7 +12,7 @@ function CSVUploader({ onDataParsed }) {
     if (file) {
       try {
         const parsedData = await parseCSV(file);
-        onDataParsed(parsedData);
+        onDataParsed(parsedData, file.name);
       } catch (error) {
         console.error('Error parsing CSV:', error);
         // TODO: Add error handling UI

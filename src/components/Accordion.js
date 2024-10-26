@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 
-function Accordion({ title, children }) {
-  const [isOpen, setIsOpen] = useState(false);
+function Accordion({ title, children, defaultOpen = false }) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
 
   return (
     <div className="accordion">
