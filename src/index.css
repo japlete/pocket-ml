@@ -136,3 +136,23 @@ th {
 .tuning-parameters input {
   width: 100px;
 }
+
+.stop-training-button {
+  background-color: #dc3545;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 10px;
+}
+
+.stop-training-button:hover {
+  background-color: #c82333;
+}
+
+.iterations-info {
+  color: #666;
+  font-style: italic;
+  margin: 10px 0;
+}

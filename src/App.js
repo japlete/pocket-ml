@@ -37,8 +37,8 @@ function App() {
   const [autoHiddenDim, setAutoHiddenDim] = useState(true);
   const [hiddenDimInput, setHiddenDimInput] = useState(32);
   const [fileName, setFileName] = useState('');
-  const [minIterations, setMinIterations] = useState(10);
-  const [maxTrainingTime, setMaxTrainingTime] = useState(30);
+  const [minIterations, setMinIterations] = useState(5);
+  const [maxTrainingTime, setMaxTrainingTime] = useState(5);
   const [trainingManager, setTrainingManager] = useState(null);
   const [trainedModels, setTrainedModels] = useState([]);
 
@@ -144,41 +144,59 @@ function App() {
     setTrainingProgress(0);
     
     if (parsedData && targetColumn) {
-      const filteredData = parsedData.filter(row => row[targetColumn] !== null && row[targetColumn] !== '');
-      const preprocessedData = preprocessData(filteredData, targetColumn, targetType, splitRatios, seed);
-      setProcessedData(preprocessedData);
+      try {
+        const filteredData = parsedData.filter(row => row[targetColumn] !== null && row[targetColumn] !== '');
+        const preprocessedData = preprocessData(filteredData, targetColumn, targetType, splitRatios, seed);
+        setProcessedData(preprocessedData);
 
-      const config = {
-        targetType,
-        primaryMetric,
-        minIterations,
-        maxTrainingTime,
-        learningRate,
-        l1Penalty: l1_penalty,
-        dropoutRate: dropout_rate,
-        batchSize,
-        epochs,
-        earlyStoppingEnabled,
-        autoHiddenDim,
-        hiddenDimInput,
-        seed
-      };
+        // Get feature columns by excluding the target column
+        const featureColumns = preprocessedData.updatedColumns.filter(col => col !== targetColumn);
 
-      const manager = new ModelTrainingManager(config);
-      setTrainingManager(manager);
+        const config = {
+          targetType,
+          primaryMetric,
+          secondaryMetrics,
+          minIterations,
+          maxTrainingTime,
+          learningRate,
+          l1Penalty: l1_penalty,
+          dropoutRate: dropout_rate,
+          batchSize,
+          epochs,
+          earlyStoppingEnabled: Boolean(earlyStoppingEnabled),
+          autoHiddenDim,
+          hiddenDimInput,
+          seed,
+          targetColumn,
+          featureColumns,
+          numClasses: targetType === 'multiclass' ? 
+            [...new Set(preprocessedData.trainData.map(row => row[targetColumn]))].length : 
+            (targetType === 'binary' ? 2 : 1)
+        };
 
-      const results = await manager.startTrainingCycle(
-        preprocessedData.trainData,
-        preprocessedData.validationData,
-        preprocessedData.testData,
-        (epoch, totalEpochs) => {
-          setTrainingProgress(Math.round((epoch / totalEpochs) * 100));
+        const manager = new ModelTrainingManager(config);
+        setTrainingManager(manager);
+
+        const results = await manager.startTrainingCycle(
+          preprocessedData.trainData,
+          preprocessedData.validationData,
+          preprocessedData.testData,
+          (epoch, totalEpochs) => {
+            setTrainingProgress(Math.round((epoch / totalEpochs) * 100));
+          }
+        );
+
+        // Only update states if we have results (training wasn't aborted)
+        if (results) {
+          setTrainedModels(results.trainedModels);
+          setModelResults(results.finalMetrics);
         }
-      );
-
-      setTrainedModels(results.trainedModels);
-      setModelResults(results.testMetrics);
-      setIsTraining(false);
+      } catch (error) {
+        console.error('Training error:', error);
+        // Handle error appropriately
+      } finally {
+        setIsTraining(false);
+      }
     }
   };
 
@@ -200,6 +218,17 @@ function App() {
 
   const handleSecondaryMetricsChange = (metrics) => {
     setSecondaryMetrics(metrics);
+  };
+
+  const handleStopTraining = async () => {
+    if (trainingManager) {
+      // Don't reset isTraining state here - wait for results
+      trainingManager.stopTraining();
+      
+      // The training manager will finish the current iteration and compute final metrics
+      // We don't need to do anything else here as the startTrainingCycle promise
+      // will resolve with the results, which are handled in handleStartTraining
+    }
   };
 
   const columns = parsedData ? Object.keys(parsedData[0]) : [];
@@ -288,11 +317,18 @@ function App() {
         <div>
           <h2>Model Training</h2>
           <p>Model is training. Please wait... {trainingProgress}% completed</p>
+          <button 
+            onClick={handleStopTraining}
+            className="stop-training-button"
+          >
+            Stop Training
+          </button>
         </div>
       )}
       {!isTraining && modelResults && (
         <div>
           <h2>Model Results</h2>
+          <p className="iterations-info">Best of {trainedModels.length} models</p>
           <table className="results-table">
             <thead>
               <tr>
@@ -305,14 +341,14 @@ function App() {
             <tbody>
               <tr>
                 <td>Loss</td>
-                <td>{modelResults.trainLoss.toFixed(4)}</td>
-                <td>{modelResults.validationLoss.toFixed(4)}</td>
-                <td>{modelResults.testLoss.toFixed(4)}</td>
+                <td>{modelResults.train.loss.toFixed(4)}</td>
+                <td>{modelResults.validation.loss.toFixed(4)}</td>
+                <td>{modelResults.test.loss.toFixed(4)}</td>
               </tr>
               {[primaryMetric, ...secondaryMetrics].map((metric) => {
-                const trainValue = modelResults[`train${metric.toUpperCase()}`];
-                const validationValue = modelResults[`validation${metric.toUpperCase()}`];
-                const testValue = modelResults[`test${metric.toUpperCase()}`];
+                const trainValue = modelResults.train[metric.toUpperCase()];
+                const validationValue = modelResults.validation[metric.toUpperCase()];
+                const testValue = modelResults.test[metric.toUpperCase()];
                 
                 if (trainValue !== undefined && validationValue !== undefined && testValue !== undefined) {
                   const formattedMetricName = metric

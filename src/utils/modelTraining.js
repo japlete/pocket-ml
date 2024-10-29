@@ -1,5 +1,6 @@
 import * as tf from '@tensorflow/tfjs';
-import { calculateMetrics } from './modelMetrics';
+//import { calculateMetrics } from './modelMetrics';
+import seedrandom from 'seedrandom';
 
 // Custom Callback class for logging
 class LoggingCallback extends tf.Callback {
@@ -10,6 +11,9 @@ class LoggingCallback extends tf.Callback {
   }
 
   async onEpochEnd(epoch, logs) {
+    // Wait for next frame to keep UI responsive
+    await tf.nextFrame();
+    
     const lossValue = logs.loss !== undefined ? 
       (logs.loss instanceof tf.Tensor ? logs.loss.dataSync()[0].toFixed(4) : logs.loss.toFixed(4)) : 
       'N/A';
@@ -20,10 +24,16 @@ class LoggingCallback extends tf.Callback {
     console.log(`Epoch ${epoch + 1}: loss = ${lossValue}, val_loss = ${valLossValue}`);
     this.onProgressUpdate(epoch + 1, this.totalEpochs);
   }
+
+  async onBatchEnd(batch, logs) {
+    // Add frame yielding every few batches to prevent UI freezing
+    if (batch % 5 === 0) { // Adjust this number based on performance
+      await tf.nextFrame();
+    }
+  }
 }
 
 export async function trainModel(tensorData, targetType, onProgressUpdate, config) {
-  console.log('Starting model training...');
 
   const { x: trainX, y: trainY } = tensorData.train;
   const { x: validationX, y: validationY } = tensorData.validation;
@@ -42,6 +52,9 @@ export async function trainModel(tensorData, targetType, onProgressUpdate, confi
     numClasses
   } = config;
 
+  // Set the random seed for the epoch shuffling
+  seedrandom(seed, { global: true });
+
   // Create the model. Determine first hidden layer size
   const hidden_dim = autoHiddenDim ? 
     2 ** Math.ceil(Math.log2(Math.ceil((trainX.shape[0] / trainX.shape[1]) ** 0.4))) : 
@@ -52,7 +65,10 @@ export async function trainModel(tensorData, targetType, onProgressUpdate, confi
   const input = tf.input({shape: [trainX.shape[1]]});
 
   // Add L1 regularization if specified
-  let first_layer_args = {units: hidden_dim, activation: 'gelu_new'};
+  let first_layer_args = {units: hidden_dim, 
+    activation: 'gelu_new', 
+    kernelInitializer: tf.initializers.glorotNormal({seed: seed+1})
+  };
   if (l1Penalty) {
     first_layer_args = {
       ...first_layer_args,
@@ -72,7 +88,11 @@ export async function trainModel(tensorData, targetType, onProgressUpdate, confi
       const dropout = tf.layers.dropout({rate: dropoutRate, seed: seed+next_hidden_dim}).apply(prev_layer);
       prev_layer = dropout;
     }
-    const dense = tf.layers.dense({units: next_hidden_dim, activation: 'gelu_new'}).apply(prev_layer);
+    const dense = tf.layers.dense({
+      units: next_hidden_dim, 
+      activation: 'gelu_new', 
+      kernelInitializer: tf.initializers.glorotNormal({seed: seed+residual_concat.length})
+    }).apply(prev_layer);
     prev_layer = dense;
     residual_concat.push(dense);
     console.log('Added hidden layer of size:', next_hidden_dim);
@@ -89,12 +109,16 @@ export async function trainModel(tensorData, targetType, onProgressUpdate, confi
 
   // Add the output layer based on the target type
   let output;
+  const outputLayerConfig = {
+    kernelInitializer: tf.initializers.glorotNormal({seed: seed + residual_concat.length}),
+  };
   if (targetType === 'regression') {
-    output = tf.layers.dense({units: 1}).apply(last_layer);
+    output = tf.layers.dense({...outputLayerConfig, units: 1}).apply(last_layer);
   } else if (targetType === 'binary') {
-    output = tf.layers.dense({units: 1, activation: 'sigmoid'}).apply(last_layer);
+    output = tf.layers.dense({...outputLayerConfig, units: 1, activation: 'sigmoid'}).apply(last_layer);
   } else if (targetType === 'multiclass') {
     output = tf.layers.dense({
+      ...outputLayerConfig,
       units: numClasses, 
       activation: 'softmax'
     }).apply(last_layer);
@@ -102,10 +126,9 @@ export async function trainModel(tensorData, targetType, onProgressUpdate, confi
 
   const model = tf.model({inputs: input, outputs: output});
 
-  // Print model summary and backend
-  console.log("Current backend:", tf.getBackend());
-  console.log('Model summary:');
-  model.summary();
+  // Print number of parameters
+  const numParams = model.countParams();
+  console.log('Number of parameters:', numParams);
 
   // Compile the model - simplified, only with loss
   const optimizer = tf.train.adam(learningRate);
@@ -122,15 +145,18 @@ export async function trainModel(tensorData, targetType, onProgressUpdate, confi
   model.compile({ optimizer, loss });
   console.log('Model compiled with loss:', loss);
 
+  // Print model backend
+  console.log("Current backend:", tf.getBackend());
+
   // Train the model
-  const loggingCallback = new LoggingCallback(onProgressUpdate, epochs);
-  const callbacks = [loggingCallback];
+  const callbacks = [new LoggingCallback(onProgressUpdate, epochs)];
+  
   if (earlyStoppingEnabled) {
-    const earlyStoppingCallback = tf.callbacks.earlyStopping({
+    callbacks.push(tf.callbacks.earlyStopping({
       monitor: 'val_loss',
-      patience: 3
-    });
-    callbacks.push(earlyStoppingCallback);
+      patience: 3,
+      verbose: 1 // Add verbose logging
+    }));
   }
 
   const history = await model.fit(trainX, trainY, {
@@ -142,6 +168,5 @@ export async function trainModel(tensorData, targetType, onProgressUpdate, confi
 
   console.log('Model training completed.');
 
-  // Return only the trained model, without disposing any tensors
-  return { model };
+  return { model, history };
 }

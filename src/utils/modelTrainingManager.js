@@ -9,9 +9,14 @@ export class ModelTrainingManager {
       // Training configuration
       targetType: config.targetType,
       primaryMetric: config.primaryMetric,
-      minIterations: config.minIterations,  // Changed from maxIterations
+      secondaryMetrics: config.secondaryMetrics || [],
+      minIterations: config.minIterations,
       maxTrainingTime: config.maxTrainingTime,
       numClasses: config.numClasses,
+      
+      // Add these two important configurations
+      targetColumn: config.targetColumn,
+      featureColumns: config.featureColumns,
       
       // Model hyperparameters
       learningRate: config.learningRate,
@@ -32,88 +37,128 @@ export class ModelTrainingManager {
     this.isTraining = false;
     this.startTime = null;
     this.tensorData = null;
+    this.abortController = null;
   }
 
   async startTrainingCycle(trainData, validationData, testData, onProgressUpdate) {
     this.isTraining = true;
     this.startTime = Date.now();
+    this.abortController = new AbortController();
     
-    // Prepare tensors once at the start
+    // Prepare tensors once at the start with the correct configuration
     this.tensorData = prepareDataTensors(
       trainData, 
       validationData, 
       testData, 
-      this.config.targetColumn, 
-      this.config.featureColumns, 
+      this.config.targetColumn,
+      this.config.featureColumns,
       this.config.targetType
     );
     
-    while (this.shouldContinueTraining()) {
-      console.log(`Starting iteration ${this.currentIteration + 1}`);
-      
-      const { model } = await trainModel(
-        this.tensorData,
-        this.config.targetType,
-        onProgressUpdate,
-        this.getCurrentHyperparameters()
-      );
-
-      // During training, only compute primary metric, since it's the only one used for model selection
-      const trainResults = await this.evaluateModel(model, this.tensorData.train.x, this.tensorData.train.y, false);
-      const validationResults = await this.evaluateModel(model, this.tensorData.validation.x, this.tensorData.validation.y, false);
-
-      const results = {
-        train: trainResults,
-        validation: validationResults
-      };
-
-      this.allModels.push({
-        iteration: this.currentIteration,
-        metrics: results,
-        hyperparameters: this.getCurrentHyperparameters()
-      });
-
-      this.updateBestModel(model, results);
-      
-      this.currentIteration++;
-      
-      if (this.shouldStopTraining()) break;
-      
-      if (model !== this.bestModel) {
-        model.dispose();
+    const trainNextIteration = async () => {
+      if (!this.shouldContinueTraining()) {
+        await this.finishTraining();
+        return;
       }
 
-      this.updateHyperparameters();
+      console.log(`Starting hyper-tuning iteration ${this.currentIteration + 1}`);
+      
+      try {
+        const { model } = await trainModel(
+          this.tensorData,
+          this.config.targetType,
+          onProgressUpdate,
+          this.getCurrentHyperparameters()
+        );
+
+        const trainResults = await this.evaluateModel(model, this.tensorData.train.x, this.tensorData.train.y, false);
+        const validationResults = await this.evaluateModel(model, this.tensorData.validation.x, this.tensorData.validation.y, false);
+
+        const results = {
+          train: trainResults,
+          validation: validationResults
+        };
+
+        this.allModels.push({
+          iteration: this.currentIteration,
+          metrics: results,
+          hyperparameters: this.getCurrentHyperparameters()
+        });
+
+        this.updateBestModel(model, results);
+        
+        this.currentIteration++;
+        
+        if (model !== this.bestModel) {
+          model.dispose();
+        }
+
+        this.updateHyperparameters();
+        
+        // Continue to next iteration
+        setTimeout(trainNextIteration, 0);
+      } catch (error) {
+        console.error('Training error:', error);
+        await this.finishTraining();
+      }
+    };
+
+    // Start the first iteration
+    await trainNextIteration();
+    
+    // Wait for training to complete
+    return new Promise((resolve) => {
+      const checkCompletion = () => {
+        if (!this.isTraining) {
+          resolve({
+            bestModel: this.bestModel,
+            trainedModels: this.allModels.sort((a, b) => 
+              this.compareMetrics(b.metrics.validation, a.metrics.validation)
+            ),
+            finalMetrics: this.finalMetrics,
+            completedIterations: this.currentIteration
+          });
+        } else {
+          setTimeout(checkCompletion, 100);
+        }
+      };
+      checkCompletion();
+    });
+  }
+
+  stopTraining() {
+    if (this.abortController) {
+      this.abortController.abort();
     }
+  }
+
+  async finishTraining() {
+    if (!this.isTraining) return; // Prevent multiple calls
     
-    this.isTraining = false;
+    console.log('Finishing training and computing final metrics...');
     
-    // Clean up tensors at the end
+    // Clean up tensors
     if (this.tensorData) {
+      // Compute all metrics for the best model before cleanup
+      if (this.bestModel) {
+        const finalTrainResults = await this.evaluateModel(this.bestModel, this.tensorData.train.x, this.tensorData.train.y, true);
+        const finalValidationResults = await this.evaluateModel(this.bestModel, this.tensorData.validation.x, this.tensorData.validation.y, true);
+        const finalTestResults = await this.evaluateModel(this.bestModel, this.tensorData.test.x, this.tensorData.test.y, true);
+        
+        this.finalMetrics = {
+          train: finalTrainResults,
+          validation: finalValidationResults,
+          test: finalTestResults
+        };
+      }
+
       Object.values(this.tensorData).forEach(set => {
         Object.values(set).forEach(tensor => tensor.dispose());
       });
       this.tensorData = null;
     }
-    
-    // Compute all metrics for the best model
-    if (this.bestModel) {
-      const finalTrainResults = await this.evaluateModel(this.bestModel, this.tensorData.train.x, this.tensorData.train.y, true);
-      const finalValidationResults = await this.evaluateModel(this.bestModel, this.tensorData.validation.x, this.tensorData.validation.y, true);
-      const finalTestResults = await this.evaluateModel(this.bestModel, this.tensorData.test.x, this.tensorData.test.y, true);
 
-      return {
-        bestModel: this.bestModel,
-        trainedModels: this.allModels.sort((a, b) => 
-          this.compareMetrics(b.metrics.validation, a.metrics.validation)
-        ),
-        finalMetrics: {
-          train: finalTrainResults,
-          validation: finalValidationResults,
-          test: finalTestResults
-        }
-      };
-    }
+    this.isTraining = false;
   }
 
   async trainSingleModel(trainData, validationData, onProgressUpdate) {
@@ -176,21 +221,16 @@ export class ModelTrainingManager {
   shouldContinueTraining() {
     const timeLimit = this.config.maxTrainingTime * 60 * 1000; // Convert minutes to ms
     const timeElapsed = Date.now() - this.startTime;
-    const timeRemaining = timeElapsed < timeLimit;
-    const minIterationsCompleted = this.currentIteration >= this.config.minIterations;
-
-    // Continue if we haven't reached min iterations OR if we still have time
-    return !minIterationsCompleted || timeRemaining;
-  }
-
-  shouldStopTraining() {
-    const timeLimit = this.config.maxTrainingTime * 60 * 1000;
-    const timeElapsed = Date.now() - this.startTime;
     const timeExceeded = timeElapsed >= timeLimit;
     const minIterationsCompleted = this.currentIteration >= this.config.minIterations;
 
-    // Stop if we've exceeded time limit AND completed minimum iterations
-    return timeExceeded && minIterationsCompleted;
+    // Continue training if either:
+    // 1. We haven't completed minimum iterations OR
+    // 2. We haven't exceeded the time limit (if a time limit is set)
+    // AND
+    // 3. We haven't been aborted
+    return (!minIterationsCompleted || !timeExceeded) && 
+           !this.abortController.signal.aborted;
   }
 
   getCurrentHyperparameters() {
@@ -200,8 +240,11 @@ export class ModelTrainingManager {
       dropoutRate: this.config.dropoutRate,
       batchSize: this.config.batchSize,
       epochs: this.config.epochs,
-      hiddenDim: this.config.autoHiddenDim ? 'auto' : this.config.hiddenDimInput,
-      numClasses: this.config.numClasses // Include this in hyperparameters
+      earlyStoppingEnabled: this.config.earlyStoppingEnabled,
+      autoHiddenDim: this.config.autoHiddenDim,
+      hiddenDimInput: this.config.hiddenDimInput,
+      numClasses: this.config.numClasses,
+      seed: this.config.seed
     };
   }
 

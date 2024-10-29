@@ -221,6 +221,9 @@ function AdvancedSettings({
         )}
       </Accordion>
       <Accordion title="Model Hyperparameters">
+      <div style={{ fontSize: '12px', color: '#888' }}>
+        Some of these parameters will be adjusted during the tuning iterations.
+      </div>
         <div>
           <label htmlFor="learning-rate">Learning Rate: </label>
           <input

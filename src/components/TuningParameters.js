@@ -8,10 +8,10 @@ function TuningParameters({
 }) {
   const handleMaxTrainingTimeChange = (e) => {
     const value = parseInt(e.target.value);
-    if (value > 0) {
+    if (value >= 0) {
       onMaxTrainingTimeChange(value);
     } else {
-      onMaxTrainingTimeChange(30); // Default to 30 minutes if invalid
+      onMaxTrainingTimeChange(0);
     }
   };
 
@@ -20,7 +20,7 @@ function TuningParameters({
     if (value > 0) {
       onMinIterationsChange(value);
     } else {
-      onMinIterationsChange(10); // Default to 10 iterations if invalid
+      onMinIterationsChange(5);
     }
   };
 
@@ -33,7 +33,7 @@ function TuningParameters({
           id="max-training-time"
           value={maxTrainingTime}
           onChange={handleMaxTrainingTimeChange}
-          min="1"
+          min="0"
           step="5"
         />
       </div>
