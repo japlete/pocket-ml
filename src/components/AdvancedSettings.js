@@ -3,6 +3,8 @@ import Accordion from './Accordion';
 import Slider from 'rc-slider';
 import 'rc-slider/assets/index.css';
 
+const MAX_HIDDEN_DIM = 512;
+
 function AdvancedSettings({ 
   onSplitChange, 
   onSeedChange, 
@@ -150,7 +152,7 @@ function AdvancedSettings({
   const handleHiddenDimInputChange = (e) => {
     const value = parseInt(e.target.value);
     if (value > 0) {
-      onHiddenDimInputChange(value);
+      onHiddenDimInputChange(Math.min(value, MAX_HIDDEN_DIM));
     } else {
       onHiddenDimInputChange(1); // Minimum value of 1
     }
@@ -308,6 +310,7 @@ function AdvancedSettings({
             onChange={handleHiddenDimInputChange}
             disabled={autoHiddenDim}
             min="1"
+            max={MAX_HIDDEN_DIM}
             step="1"
           />
         </div>

@@ -57,8 +57,8 @@ export async function trainModel(tensorData, targetType, onProgressUpdate, confi
 
   // Create the model. Determine first hidden layer size
   const hidden_dim = autoHiddenDim ? 
-    2 ** Math.ceil(Math.log2(Math.ceil((trainX.shape[0] / trainX.shape[1]) ** 0.4))) : 
-    hiddenDimInput;
+    Math.min(512, 2 ** Math.ceil(Math.log2(Math.ceil((trainX.shape[0] / trainX.shape[1]) ** 0.4)))) : 
+    Math.min(512, hiddenDimInput);
   console.log('First hidden layer size:', hidden_dim);
 
   // Create input layer
@@ -135,7 +135,7 @@ export async function trainModel(tensorData, targetType, onProgressUpdate, confi
   let loss;
 
   if (targetType === 'regression') {
-    loss = tf.losses.meanSquaredError;
+    loss = 'meanSquaredError';
   } else if (targetType === 'binary') {
     loss = 'binaryCrossentropy';
   } else if (targetType === 'multiclass') {
@@ -159,6 +159,7 @@ export async function trainModel(tensorData, targetType, onProgressUpdate, confi
     }));
   }
 
+  // Model training
   const history = await model.fit(trainX, trainY, {
     epochs: epochs,
     batchSize: batchSize,

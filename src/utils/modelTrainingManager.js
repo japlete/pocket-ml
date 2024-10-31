@@ -38,6 +38,7 @@ export class ModelTrainingManager {
     this.startTime = null;
     this.tensorData = null;
     this.abortController = null;
+    this.lastTrainedEpochs = 0;
   }
 
   async startTrainingCycle(trainData, validationData, testData, onProgressUpdate) {
@@ -64,26 +65,34 @@ export class ModelTrainingManager {
       console.log(`Starting hyper-tuning iteration ${this.currentIteration + 1}`);
       
       try {
-        const { model } = await trainModel(
+        const { model, history } = await trainModel(
           this.tensorData,
           this.config.targetType,
           onProgressUpdate,
           this.getCurrentHyperparameters()
         );
 
+        // Store actual epochs for hyperparameter tuning
+        this.lastTrainedEpochs = history.epoch.length;
+
         const trainResults = await this.evaluateModel(model, this.tensorData.train.x, this.tensorData.train.y, false);
+        console.log('Train results:', trainResults);  // Debug log
+        
         const validationResults = await this.evaluateModel(model, this.tensorData.validation.x, this.tensorData.validation.y, false);
+        console.log('Validation results:', validationResults);  // Debug log
 
         const results = {
           train: trainResults,
           validation: validationResults
         };
+        console.log('Combined results:', results);  // Debug log
 
         this.allModels.push({
           iteration: this.currentIteration,
           metrics: results,
           hyperparameters: this.getCurrentHyperparameters()
         });
+        console.log('Latest model metrics:', this.allModels[this.allModels.length - 1].metrics);  // Debug log
 
         this.updateBestModel(model, results);
         
@@ -141,6 +150,10 @@ export class ModelTrainingManager {
     if (this.tensorData) {
       // Compute all metrics for the best model before cleanup
       if (this.bestModel) {
+        // Always compute all metrics in final evaluation
+        const allMetrics = [this.config.primaryMetric, ...this.config.secondaryMetrics];
+        console.log('Computing final metrics:', allMetrics);
+        
         const finalTrainResults = await this.evaluateModel(this.bestModel, this.tensorData.train.x, this.tensorData.train.y, true);
         const finalValidationResults = await this.evaluateModel(this.bestModel, this.tensorData.validation.x, this.tensorData.validation.y, true);
         const finalTestResults = await this.evaluateModel(this.bestModel, this.tensorData.test.x, this.tensorData.test.y, true);
@@ -150,6 +163,8 @@ export class ModelTrainingManager {
           validation: finalValidationResults,
           test: finalTestResults
         };
+        
+        console.log('Final metrics computed:', this.finalMetrics);
       }
 
       Object.values(this.tensorData).forEach(set => {
@@ -166,27 +181,28 @@ export class ModelTrainingManager {
   }
 
   async evaluateModel(model, data, labels, computeAllMetrics = false) {
-    const predictions = model.predict(data);
-    const loss = model.evaluate(data, labels).dataSync()[0];
+    const predictions = model.predict(data, {batchSize: 1024}).squeeze();
+    const loss = model.evaluate(data, labels, {batchSize: 1024}).dataSync()[0];
     
     const metricsToCompute = computeAllMetrics ? 
       [this.config.primaryMetric, ...this.config.secondaryMetrics] : 
       [this.config.primaryMetric];
     
     const metricResults = calculateMetrics(
-      model, 
-      data, 
-      labels, 
+      predictions, 
+      labels.squeeze(), 
       this.config.targetType, 
       metricsToCompute
     );
     
     predictions.dispose();
 
-    return {
+    const finalResults = {
       loss,
       ...metricResults
     };
+
+    return finalResults;
   }
 
   updateBestModel(model, results) {
@@ -197,24 +213,50 @@ export class ModelTrainingManager {
   }
 
   isBetterModel(newMetrics) {
-    // Compare validation metrics
-    const currentValidationMetric = this.bestMetrics[`validation${this.config.primaryMetric.toUpperCase()}`];
-    const newValidationMetric = newMetrics[`validation${this.config.primaryMetric.toUpperCase()}`];
+    console.log('Comparing metrics:');  // Debug log
+    console.log('Best metrics so far:', this.bestMetrics);  // Debug log
+    console.log('New metrics:', newMetrics);  // Debug log
+    
+    // Compare validation metrics - capitalize the metric name
+    const metricKey = this.config.primaryMetric.toUpperCase();
+    const currentValidationMetric = this.bestMetrics?.validation[metricKey];
+    const newValidationMetric = newMetrics?.validation[metricKey];
+    
+    console.log('Primary metric:', metricKey);  // Debug log
+    console.log('Current validation metric:', currentValidationMetric);  // Debug log
+    console.log('New validation metric:', newValidationMetric);  // Debug log
+    
+    // If we don't have valid metrics to compare, treat new model as better
+    if (this.bestMetrics === null) {
+      console.log(`Model comparison (${metricKey}):`);
+      console.log('  Current best validation: none (first model)');
+      console.log(`  New model validation: ${newValidationMetric}`);
+      console.log('  Better? true (first model)');
+      return true;
+    }
     
     // For some metrics, higher is better (accuracy, AUC)
     // For others, lower is better (RMSE, loss)
-    const higherIsBetter = !['rmse', 'mse', 'mae', 'mape'].includes(this.config.primaryMetric);
+    const higherIsBetter = !['rmse', 'mse', 'mae', 'mape'].includes(this.config.primaryMetric.toLowerCase());
     
-    return higherIsBetter ? 
+    const isBetter = higherIsBetter ? 
       newValidationMetric > currentValidationMetric :
       newValidationMetric < currentValidationMetric;
+
+    console.log(`Model comparison (${metricKey}):`);
+    console.log(`  Current best validation: ${currentValidationMetric}`);
+    console.log(`  New model validation: ${newValidationMetric}`);
+    console.log(`  Better? ${isBetter}`);
+    
+    return isBetter;
   }
 
   compareMetrics(metricsA, metricsB) {
-    const metricA = metricsA[`validation${this.config.primaryMetric.toUpperCase()}`];
-    const metricB = metricsB[`validation${this.config.primaryMetric.toUpperCase()}`];
+    const metricKey = this.config.primaryMetric.toUpperCase();
+    const metricA = metricsA[metricKey];
+    const metricB = metricsB[metricKey];
     
-    const higherIsBetter = !['rmse', 'mse', 'mae', 'mape'].includes(this.config.primaryMetric);
+    const higherIsBetter = !['rmse', 'mse', 'mae', 'mape'].includes(this.config.primaryMetric.toLowerCase());
     return higherIsBetter ? metricA - metricB : metricB - metricA;
   }
 
@@ -249,9 +291,77 @@ export class ModelTrainingManager {
   }
 
   updateHyperparameters() {
-    // This will be implemented later with the AutoML logic
-    // For now, just make small random adjustments to hyperparameters
-    console.log('Hyperparameter update will be implemented in future versions');
+    // If the early stopping occurred early, halve the learning rate
+    if (this.lastTrainedEpochs < this.config.epochs * 0.4) {
+      console.log(`Early stopping occurred at ${this.lastTrainedEpochs}/${this.config.epochs} epochs. Reducing learning rate.`);
+      this.config.learningRate /= 2;
+      console.log(`New learning rate: ${this.config.learningRate}`);
+    }
+
+    // Get the latest model's metrics
+    const latestModel = this.allModels[this.allModels.length - 1];
+    if (!latestModel) return;
+
+    const metricKey = this.config.primaryMetric.toUpperCase();
+    const trainMetric = latestModel.metrics.train[metricKey];
+    const valMetric = latestModel.metrics.validation[metricKey];
+    const valSetSize = this.tensorData.validation.x.shape[0];
+    
+    // Calculate the overfitting threshold factor
+    const thresholdFactor = 1 - 0.25 / Math.pow(valSetSize, 0.2);
+    
+    console.log('Overfitting detection metrics:');
+    console.log(`  Training ${metricKey}: ${trainMetric}`);
+    console.log(`  Validation ${metricKey}: ${valMetric}`);
+    console.log(`  Threshold factor: ${thresholdFactor}`);
+    
+    // Check for overfitting based on metric type
+    const isHigherBetterMetric = !['rmse', 'mse', 'mae', 'mape'].includes(this.config.primaryMetric.toLowerCase());
+    console.log('isHigherBetter: ', isHigherBetterMetric)
+    const hasOverfitting = isHigherBetterMetric ? 
+      (valMetric < trainMetric * thresholdFactor - 0.01) :
+      (valMetric > trainMetric / thresholdFactor);
+
+    console.log(`  Overfitting detected: ${hasOverfitting}`);
+
+    if (hasOverfitting) {
+      console.log('Overfitting detected. Adjusting regularization...');
+      
+      // Increase dropout rate
+      this.config.dropoutRate = Math.min(0.5, (this.config.dropoutRate || 0) + 0.1);
+      console.log(`Increased dropout rate to ${this.config.dropoutRate}`);
+      
+      // Handle L1 regularization changes
+      if (this.config.dropoutRate >= 0.3 && this.config.l1Penalty < 0.03) {
+        if (!this.config.l1Penalty) {
+          this.config.l1Penalty = 0.001;
+          console.log('Initialized L1 penalty to 0.001');
+        } else {
+          this.config.l1Penalty *= 3;
+          console.log(`Increased L1 penalty to ${this.config.l1Penalty}`);
+        }
+      }
+    } else {
+      // If no overfitting, increase hidden dimension
+      if (this.config.autoHiddenDim) {
+        const trainShape = this.tensorData.train.x.shape;
+        this.config.hiddenDimInput = Math.min(512, 
+          2 ** Math.ceil(Math.log2(Math.ceil((trainShape[0] / trainShape[1]) ** 0.4)))
+        );
+        this.config.autoHiddenDim = false;
+      }
+      // Double the hidden dimension, but cap at 512
+      this.config.hiddenDimInput = Math.min(512, this.config.hiddenDimInput * 2);
+      console.log(`Increased hidden dimension to ${this.config.hiddenDimInput}`);
+    }
+
+    // Log the current state of hyperparameters
+    console.log('Current hyperparameters:', {
+      learningRate: this.config.learningRate,
+      dropoutRate: this.config.dropoutRate,
+      l1Penalty: this.config.l1Penalty,
+      hiddenDim: this.config.autoHiddenDim ? 'auto' : this.config.hiddenDimInput
+    });
   }
 
   // ... other helper methods

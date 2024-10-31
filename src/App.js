@@ -380,7 +380,11 @@ function App() {
       {processedData && (
         <Accordion title="Preprocessed Data Preview">
           <DataPreview 
-            data={processedData.trainData} 
+            data={[
+              ...processedData.trainData,
+              ...processedData.validationData,
+              ...processedData.testData
+            ]}
             columns={processedData.updatedColumns}
             showDownload={true}
             originalFileName={fileName}

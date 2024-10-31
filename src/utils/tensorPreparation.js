@@ -3,17 +3,24 @@ import * as tf from '@tensorflow/tfjs';
 export function prepareDataTensors(trainData, validationData, testData, targetColumn, featureColumns, targetType) {
   console.log('Preparing data tensors...');
 
-  // Prepare feature tensors
-  const trainX = tf.tensor2d(trainData.map(row => featureColumns.map(col => row[col])));
-  const validationX = tf.tensor2d(validationData.map(row => featureColumns.map(col => row[col])));
-  const testX = tf.tensor2d(testData.map(row => featureColumns.map(col => row[col])));
+  // Filter out 'split' from feature columns if it's present
+  const modelFeatures = featureColumns.filter(col => col !== 'split');
+  console.log('Model features:', modelFeatures);
+
+  // Prepare feature tensors with explicit shape
+  const trainX = tf.tensor2d(trainData.map(row => modelFeatures.map(col => row[col])), 
+    [trainData.length, modelFeatures.length]);
+  const validationX = tf.tensor2d(validationData.map(row => modelFeatures.map(col => row[col])),
+    [validationData.length, modelFeatures.length]);
+  const testX = tf.tensor2d(testData.map(row => modelFeatures.map(col => row[col])),
+    [testData.length, modelFeatures.length]);
 
   // Prepare target tensors
   let trainY, validationY, testY;
   if (targetType === 'regression') {
-    trainY = tf.tensor2d(trainData.map(row => [row[targetColumn]]));
-    validationY = tf.tensor2d(validationData.map(row => [row[targetColumn]]));
-    testY = tf.tensor2d(testData.map(row => [row[targetColumn]]));
+    trainY = tf.tensor2d(trainData.map(row => [row[targetColumn]]), [trainData.length, 1]);
+    validationY = tf.tensor2d(validationData.map(row => [row[targetColumn]]), [validationData.length, 1]);
+    testY = tf.tensor2d(testData.map(row => [row[targetColumn]]), [testData.length, 1]);
   } else {
     trainY = tf.tensor1d(trainData.map(row => row[targetColumn]));
     validationY = tf.tensor1d(validationData.map(row => row[targetColumn]));

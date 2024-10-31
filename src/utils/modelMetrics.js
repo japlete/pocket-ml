@@ -1,15 +1,26 @@
 import * as tf from '@tensorflow/tfjs';
+import { result } from 'lodash';
 
-// Move all metric calculation functions here
-export function calculateMetrics(model, data, labels, targetType, requestedMetrics) {
-  const predictions = model.predict(data);
+export function calculateMetrics(predictions, labels, targetType, requestedMetrics) {
   const results = {};
   
   // Calculate all requested metrics
   requestedMetrics.forEach(metric => {
-    switch(metric) {
+    switch(metric.toLowerCase()) {
+      case 'mse':
+        results.MSE = tf.metrics.mse(labels, predictions).dataSync()[0];
+        break;
       case 'rmse':
-        results.RMSE = calculateRMSE(labels, predictions);
+        results.RMSE = tf.sqrt(tf.metrics.mse(labels, predictions)).dataSync()[0]
+        break;
+      case 'mae':
+        results.MAE = tf.metrics.meanAbsoluteError(labels, predictions).dataSync()[0];
+        break;
+      case 'mape':
+        results.MAPE = tf.metrics.MAPE(labels, predictions).dataSync()[0];
+        break;
+      case 'r2':
+        results.R2 = tf.metrics.r2Score(labels, predictions).dataSync()[0];
         break;
       case 'accuracy':
         results.ACCURACY = calculateAccuracy(labels, predictions, targetType);
@@ -29,16 +40,15 @@ export function calculateMetrics(model, data, labels, targetType, requestedMetri
       case 'pr_auc':
         results.PR_AUC = calculatePRAUC(labels, predictions);
         break;
+      default:
+        console.warn(`Unrecognized metric: ${metric}`);
     }
   });
   
-  predictions.dispose();
+  console.log('Computed metrics:', requestedMetrics);
+  console.log('Results:', results);
+  
   return results;
-}
-
-// Move all the individual metric calculation functions here
-export function calculateRMSE(actual, predicted) {
-  return tf.sqrt(tf.metrics.mse(actual, predicted)).dataSync()[0];
 }
 
 export function calculateAccuracy(actual, predicted, targetType) {

@@ -9,33 +9,41 @@ export function preprocessData(data, targetColumn, targetType, splitRatios, seed
   // Apply stratified train-validation-test split
   const { train, validation, test } = stratifiedTrainValidationTestSplit(data, targetColumn, targetType, splitRatios.train, splitRatios.validation, seed);
   
+  // Add split information to each row
+  train.forEach(row => row.split = 'train');
+  validation.forEach(row => row.split = 'validation');
+  test.forEach(row => row.split = 'test');
+  
+  // Combine all data for preprocessing
+  const allData = [...train, ...validation, ...test];
+  
   // Analyze and preprocess the training data
   let updatedColumns = Object.keys(data[0]);
   
   // Discard columns with all same values
   updatedColumns = updatedColumns.filter(col => {
-    const uniqueValues = _.uniq(train.map(row => row[col]));
+    const uniqueValues = _.uniq(allData.map(row => row[col]));
     return uniqueValues.length > 1;
   });
   
   // Detect string columns
   const stringColumns = updatedColumns.filter(col => {
-    const nonNullValues = train.map(row => row[col]).filter(val => val !== null && val !== '');
+    const nonNullValues = allData.map(row => row[col]).filter(val => val !== null && val !== '');
     return typeof nonNullValues[0] === 'string' && col !== targetColumn;
   });
 
   // Get unique target classes for classification tasks
   let targetClasses = [];
   if (targetType !== 'regression') {
-    targetClasses = [...new Set(train.map(row => row[targetColumn]))].sort();
+    targetClasses = [...new Set(allData.map(row => row[targetColumn]))].sort();
   }
   
   const K = targetType === 'regression' ? 2 : targetClasses.length;
 
   // Check for granularity and filter out highly granular columns
   const nonGranularColumns = stringColumns.filter(col => {
-    const valueCounts = _.countBy(train, col);
-    const totalCount = train.length;
+    const valueCounts = _.countBy(allData, col);
+    const totalCount = allData.length;
     return !Object.values(valueCounts).every(count => count / totalCount < 0.1);
   });
 
@@ -44,28 +52,29 @@ export function preprocessData(data, targetColumn, targetType, splitRatios, seed
 
   // Process non-granular string columns
   nonGranularColumns.forEach(col => {
+    // Skip the split column
+    if (col === 'split') return;
+    
     // Fill missing values with 'Unknown'
-    [train, validation, test].forEach(dataset => {
-      dataset.forEach(row => { if (row[col] === null || row[col] === '') row[col] = 'Unknown'; });
-    });
+    allData.forEach(row => { if (row[col] === null || row[col] === '') row[col] = 'Unknown'; });
     
     // Get unique categories for the column
-    const categories = [...new Set(train.map(row => row[col]))];
+    const categories = [...new Set(allData.map(row => row[col]))];
     const d = categories.length;
 
     if (d < K + 5) {
       // Apply one-hot encoding
-      const encodedColumns = applyOneHotEncoding(col, categories, train, validation, test);
+      const encodedColumns = applyOneHotEncoding(col, categories, allData);
       updatedColumns = updatedColumns.filter(c => c !== col);
       updatedColumns.push(...encodedColumns);
     } else {
       // Apply target encoding
       if (targetType === 'regression') {
-        applyRegressionTargetEncoding(col, train, validation, test, targetColumn, _);
+        applyRegressionTargetEncoding(col, allData, targetColumn, _);
         updatedColumns = updatedColumns.filter(c => c !== col);
         updatedColumns.push(`${col}_encoded`);
       } else {
-        applyClassificationTargetEncoding(col, train, validation, test, targetColumn, targetClasses, _);
+        applyClassificationTargetEncoding(col, allData, targetColumn, targetClasses, _);
         updatedColumns = updatedColumns.filter(c => c !== col);
         targetClasses.slice(1).forEach(cls => {
           updatedColumns.push(`${col}_encoded_${cls}`);
@@ -74,86 +83,89 @@ export function preprocessData(data, targetColumn, targetType, splitRatios, seed
     }
   });
   
-  // Fill missing values for numeric columns
+  // Also exclude 'split' from numeric columns
   const numericColumns = updatedColumns.filter(col => {
-    const nonNullValues = train.map(row => row[col]).filter(val => val !== null && val !== '' && !isNaN(val));
+    if (col === 'split') return false;
+    const nonNullValues = allData.map(row => row[col]).filter(val => val !== null && val !== '' && !isNaN(val));
     return typeof nonNullValues[0] === 'number' && col !== targetColumn;
   });
   
   numericColumns.forEach(col => {
-    const validValues = train.map(row => row[col]).filter(val => val !== null && val !== '' && !isNaN(val));
+    const validValues = allData.map(row => row[col]).filter(val => val !== null && val !== '' && !isNaN(val));
     const mean = _.mean(validValues);
     
-    [train, validation, test].forEach(dataset => {
-      dataset.forEach(row => { 
-        if (row[col] === null || row[col] === '' || isNaN(row[col])) {
-          row[col] = mean; 
-        }
-      });
+    allData.forEach(row => { 
+      if (row[col] === null || row[col] === '' || isNaN(row[col])) {
+        row[col] = mean; 
+      }
     });
   });
   
   // Apply Standard Scaler to numeric columns
   const scaler = {};
   numericColumns.forEach(col => {
-    const values = train.map(row => row[col]);
+    const values = allData.map(row => row[col]);
     const mean = _.mean(values);
     const std = Math.sqrt(_.sum(values.map(v => Math.pow(v - mean, 2))) / values.length);
     scaler[col] = { mean, std };
     
-    [train, validation, test].forEach(dataset => {
-      dataset.forEach(row => {
-        row[col] = (row[col] - mean) / std;
-      });
+    allData.forEach(row => {
+      row[col] = (row[col] - mean) / std;
     });
   });
   
   // Process target column for classification tasks
   let classMapping = null;
   if (targetType === 'binary' || targetType === 'multiclass') {
-    const uniqueClasses = [...new Set(train.map(row => row[targetColumn]))];
+    const uniqueClasses = [...new Set(allData.map(row => row[targetColumn]))];
     classMapping = Object.fromEntries(uniqueClasses.map((cls, index) => [cls, index]));
     
     // Apply class mapping to all datasets
-    [train, validation, test].forEach(dataset => {
-      dataset.forEach(row => {
-        row[targetColumn] = classMapping[row[targetColumn]] ?? -1;
-      });
+    allData.forEach(row => {
+      row[targetColumn] = classMapping[row[targetColumn]] ?? -1;
     });
   }
   
+  // Make sure 'split' is included in updatedColumns
+  if (!updatedColumns.includes('split')) {
+    updatedColumns.push('split');
+  }
+
+  // Split the processed data back into train/validation/test
+  const processedTrain = allData.filter(row => row.split === 'train');
+  const processedValidation = allData.filter(row => row.split === 'validation');
+  const processedTest = allData.filter(row => row.split === 'test');
+
   return {
-    trainData: train,
-    validationData: validation,
-    testData: test,
+    trainData: processedTrain,
+    validationData: processedValidation,
+    testData: processedTest,
     updatedColumns,
     scaler,
     classMapping
   };
 }
 
-function applyOneHotEncoding(col, categories, train, validation, test) {
+function applyOneHotEncoding(col, categories, allData) {
   const categoriesToEncode = categories.slice(0, -1); // Omit the last category
-  [train, validation, test].forEach(dataset => {
-    dataset.forEach(row => {
-      categoriesToEncode.forEach(category => {
-        row[`${col}_${category}`] = row[col] === category ? 1 : 0;
-      });
-      delete row[col];
+  allData.forEach(row => {
+    categoriesToEncode.forEach(category => {
+      row[`${col}_${category}`] = row[col] === category ? 1 : 0;
     });
+    delete row[col];
   });
   return categoriesToEncode.map(category => `${col}_${category}`);
 }
 
-function applyRegressionTargetEncoding(col, train, validation, test, targetColumn, _) {
-  const globalAverage = _.mean(train.map(row => row[targetColumn]));
+function applyRegressionTargetEncoding(col, allData, targetColumn, _) {
+  const globalAverage = _.mean(allData.map(row => row[targetColumn]));
   const encodedColumn = `${col}_encoded`;
   
-  const shuffledTrain = _.shuffle(train);
+  const shuffledAllData = _.shuffle(allData);
   const encodingMap = {};
   const categoryCounts = {};
   
-  shuffledTrain.forEach(row => {
+  shuffledAllData.forEach(row => {
     const category = row[col];
     if (!encodingMap[category]) {
       encodingMap[category] = globalAverage;
@@ -167,20 +179,18 @@ function applyRegressionTargetEncoding(col, train, validation, test, targetColum
     row[encodedColumn] = encodingMap[category];
   });
   
-  [validation, test].forEach(dataset => {
-    dataset.forEach(row => {
-      row[encodedColumn] = encodingMap[row[col]] || globalAverage;
-    });
+  allData.forEach(row => {
+    row[encodedColumn] = encodingMap[row[col]] || globalAverage;
   });
 }
 
-function applyClassificationTargetEncoding(col, train, validation, test, targetColumn, targetClasses, _) {
+function applyClassificationTargetEncoding(col, allData, targetColumn, targetClasses, _) {
   const globalProportions = targetClasses.reduce((acc, cls) => {
-    acc[cls] = train.filter(row => row[targetColumn] === cls).length / train.length;
+    acc[cls] = allData.filter(row => row[targetColumn] === cls).length / allData.length;
     return acc;
   }, {});
 
-  const shuffledTrain = _.shuffle(train);
+  const shuffledAllData = _.shuffle(allData);
   const encodingMaps = {};
   const categoryCounts = {};
 
@@ -189,7 +199,7 @@ function applyClassificationTargetEncoding(col, train, validation, test, targetC
     categoryCounts[cls] = {};
   });
 
-  shuffledTrain.forEach(row => {
+  shuffledAllData.forEach(row => {
     const category = row[col];
     targetClasses.slice(1).forEach(cls => {
       const encodedColumn = `${col}_encoded_${cls}`;
@@ -207,12 +217,10 @@ function applyClassificationTargetEncoding(col, train, validation, test, targetC
     });
   });
 
-  [validation, test].forEach(dataset => {
-    dataset.forEach(row => {
-      targetClasses.slice(1).forEach(cls => {
-        const encodedColumn = `${col}_encoded_${cls}`;
-        row[encodedColumn] = encodingMaps[cls][row[col]] || globalProportions[cls];
-      });
+  allData.forEach(row => {
+    targetClasses.slice(1).forEach(cls => {
+      const encodedColumn = `${col}_encoded_${cls}`;
+      row[encodedColumn] = encodingMaps[cls][row[col]] || globalProportions[cls];
     });
   });
 }
