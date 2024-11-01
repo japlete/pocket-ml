@@ -9,6 +9,9 @@ import { preprocessData } from './utils/dataPreprocessing.js';
 import { trainModel } from './utils/modelTraining.js';
 import { ModelTrainingManager } from './utils/modelTrainingManager';
 import TuningParameters from './components/TuningParameters';
+import SaveModelDialog from './components/SaveModelDialog';
+import SavedModelsList from './components/SavedModelsList';
+import ModelArchitectureDisplay from './components/ModelArchitectureDisplay';
 import './index.css';
 
 function App() {
@@ -41,6 +44,11 @@ function App() {
   const [maxTrainingTime, setMaxTrainingTime] = useState(5);
   const [trainingManager, setTrainingManager] = useState(null);
   const [trainedModels, setTrainedModels] = useState([]);
+  const [bestModel, setBestModel] = useState(null);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [dataPreviewOpen, setDataPreviewOpen] = useState(true);
+  const [processedDataPreviewOpen, setProcessedDataPreviewOpen] = useState(true);
+  const [modelArchitectureOpen, setModelArchitectureOpen] = useState(true);
 
   const handleDataParsed = (data, name) => {
     setParsedData(data);
@@ -142,6 +150,8 @@ function App() {
   const handleStartTraining = async () => {
     setIsTraining(true);
     setTrainingProgress(0);
+    setDataPreviewOpen(false);
+    setProcessedDataPreviewOpen(true);
     
     if (parsedData && targetColumn) {
       try {
@@ -149,7 +159,6 @@ function App() {
         const preprocessedData = preprocessData(filteredData, targetColumn, targetType, splitRatios, seed);
         setProcessedData(preprocessedData);
 
-        // Get feature columns by excluding the target column
         const featureColumns = preprocessedData.updatedColumns.filter(col => col !== targetColumn);
 
         const config = {
@@ -190,6 +199,17 @@ function App() {
         if (results) {
           setTrainedModels(results.trainedModels);
           setModelResults(results.finalMetrics);
+          setBestModel(results.bestModel);
+          const bestModelIteration = results.trainedModels.findIndex(model => 
+            model.metrics.validation[primaryMetric.toUpperCase()] === results.finalMetrics.validation[primaryMetric.toUpperCase()]
+          ) + 1;
+          setModelResults({
+            ...results.finalMetrics,
+            bestModelIteration
+          });
+          setDataPreviewOpen(false);
+          setProcessedDataPreviewOpen(false);
+          setModelArchitectureOpen(true);
         }
       } catch (error) {
         console.error('Training error:', error);
@@ -210,6 +230,7 @@ function App() {
     setMissingValueCount(0);
     setUniqueValueCount(0);
     setIsTraining(false);
+    setBestModel(null);
   };
 
   const handlePrimaryMetricChange = (metric) => {
@@ -231,166 +252,258 @@ function App() {
     }
   };
 
+  const handleSaveModel = () => {
+    setShowSaveDialog(true);
+  };
+
+  const handleSaveDialogClose = (success) => {
+    setShowSaveDialog(false);
+    if (success) {
+      // Optionally show a success message
+      alert('Model saved successfully!');
+    }
+  };
+
   const columns = parsedData ? Object.keys(parsedData[0]) : [];
 
   return (
     <div className="App">
       <h1>Pocket ML</h1>
-      {parsedData && <button onClick={handleReset} className="home-button">Home</button>}
-      {!parsedData && <CSVUploader onDataParsed={handleDataParsed} />}
-      
-      {/* Show configuration UI only when data is loaded AND not training/trained */}
-      {parsedData && !isTraining && !modelResults && (
-        <>
-          <Accordion title="Data Preview" defaultOpen={true}>
-            <DataPreview 
-              data={parsedData} 
-              columns={Object.keys(parsedData[0])}
-            />
-          </Accordion>
-          <p>{parsedData.length} rows loaded</p>
-          <TargetSelector
-            columns={columns}
-            selectedTarget={targetColumn}
-            onTargetChange={handleTargetChange}
-          />
-          {targetColumn && (
+      <div className="panel-container">
+        {/* Left Panel */}
+        <div className="left-panel">
+          {parsedData && <button onClick={handleReset} className="home-button">Home</button>}
+          {!parsedData && <CSVUploader onDataParsed={handleDataParsed} />}
+          
+          {/* Show configuration UI only when data is loaded AND not training/trained */}
+          {parsedData && !isTraining && !modelResults && (
             <>
-              {missingValueCount > 0 && (
-                <p className="warning">
-                  Warning: {missingValueCount} rows with missing values detected in the target column. These rows will be discarded.
-                </p>
-              )}
-              {uniqueValueCount === 1 ? (
-                <p className="error">Error: The target column has only one unique value. Please select a different target column.</p>
-              ) : (
-                <TargetTypeSelector
-                  targetType={targetType}
-                  suggestedType={suggestedTargetType}
-                  onTargetTypeChange={handleTargetTypeChange}
-                  allowedTypes={allowedTargetTypes}
-                />
-              )}
-              <TuningParameters
-                maxTrainingTime={maxTrainingTime}
-                onMaxTrainingTimeChange={setMaxTrainingTime}
-                minIterations={minIterations}
-                onMinIterationsChange={setMinIterations}
+              <TargetSelector
+                columns={columns}
+                selectedTarget={targetColumn}
+                onTargetChange={handleTargetChange}
               />
+              {targetColumn && (
+                <>
+                  {missingValueCount > 0 && (
+                    <p className="warning">
+                      Warning: {missingValueCount} rows with missing values detected in the target column. These rows will be discarded.
+                    </p>
+                  )}
+                  {uniqueValueCount === 1 ? (
+                    <p className="error">Error: The target column has only one unique value. Please select a different target column.</p>
+                  ) : (
+                    <TargetTypeSelector
+                      targetType={targetType}
+                      suggestedType={suggestedTargetType}
+                      onTargetTypeChange={handleTargetTypeChange}
+                      allowedTypes={allowedTargetTypes}
+                    />
+                  )}
+                  <TuningParameters
+                    maxTrainingTime={maxTrainingTime}
+                    onMaxTrainingTimeChange={setMaxTrainingTime}
+                    minIterations={minIterations}
+                    onMinIterationsChange={setMinIterations}
+                  />
+                </>
+              )}
+              <AdvancedSettings
+                onSplitChange={handleSplitChange}
+                onSeedChange={handleSeedChange}
+                onPrimaryMetricChange={handlePrimaryMetricChange}
+                onSecondaryMetricsChange={handleSecondaryMetricsChange}
+                onL1PenaltyChange={setL1Penalty}
+                onDropoutRateChange={setDropoutRate}
+                onBatchSizeChange={setBatchSize}
+                onEpochsChange={setEpochs}
+                onEarlyStoppingChange={setEarlyStoppingEnabled}
+                onLearningRateChange={setLearningRate}
+                onAutoHiddenDimChange={setAutoHiddenDim}
+                onHiddenDimInputChange={setHiddenDimInput}
+                autoHiddenDim={autoHiddenDim}
+                hiddenDimInput={hiddenDimInput}
+                targetType={targetType}
+                classDistribution={classDistribution}
+                l1_penalty={l1_penalty}
+                dropout_rate={dropout_rate}
+                batchSize={batchSize}
+                epochs={epochs}
+                earlyStoppingEnabled={earlyStoppingEnabled}
+                learningRate={learningRate}
+              />
+              <button 
+                onClick={handleStartTraining} 
+                disabled={!targetColumn || !targetType || uniqueValueCount <= 1}
+              >
+                Start Training
+              </button>
             </>
           )}
-          <AdvancedSettings
-            onSplitChange={handleSplitChange}
-            onSeedChange={handleSeedChange}
-            onPrimaryMetricChange={handlePrimaryMetricChange}
-            onSecondaryMetricsChange={handleSecondaryMetricsChange}
-            onL1PenaltyChange={setL1Penalty}
-            onDropoutRateChange={setDropoutRate}
-            onBatchSizeChange={setBatchSize}
-            onEpochsChange={setEpochs}
-            onEarlyStoppingChange={setEarlyStoppingEnabled}
-            onLearningRateChange={setLearningRate}
-            onAutoHiddenDimChange={setAutoHiddenDim}
-            onHiddenDimInputChange={setHiddenDimInput}
-            autoHiddenDim={autoHiddenDim}
-            hiddenDimInput={hiddenDimInput}
-            targetType={targetType}
-            classDistribution={classDistribution}
-            l1_penalty={l1_penalty}
-            dropout_rate={dropout_rate}
-            batchSize={batchSize}
-            epochs={epochs}
-            earlyStoppingEnabled={earlyStoppingEnabled}
-            learningRate={learningRate}
-          />
-          <button 
-            onClick={handleStartTraining} 
-            disabled={!targetColumn || !targetType || uniqueValueCount <= 1}
-          >
-            Start Training
-          </button>
-        </>
-      )}
 
-      {/* Show training progress or results */}
-      {isTraining && (
-        <div>
-          <h2>Model Training</h2>
-          <p>Model is training. Please wait... {trainingProgress}% completed</p>
-          <button 
-            onClick={handleStopTraining}
-            className="stop-training-button"
-          >
-            Stop Training
-          </button>
-        </div>
-      )}
-      {!isTraining && modelResults && (
-        <div>
-          <h2>Model Results</h2>
-          <p className="iterations-info">Best of {trainedModels.length} models</p>
-          <table className="results-table">
-            <thead>
-              <tr>
-                <th>Metric</th>
-                <th>Train</th>
-                <th>Validation</th>
-                <th>Test</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>Loss</td>
-                <td>{modelResults.train.loss.toFixed(4)}</td>
-                <td>{modelResults.validation.loss.toFixed(4)}</td>
-                <td>{modelResults.test.loss.toFixed(4)}</td>
-              </tr>
-              {[primaryMetric, ...secondaryMetrics].map((metric) => {
-                const trainValue = modelResults.train[metric.toUpperCase()];
-                const validationValue = modelResults.validation[metric.toUpperCase()];
-                const testValue = modelResults.test[metric.toUpperCase()];
-                
-                if (trainValue !== undefined && validationValue !== undefined && testValue !== undefined) {
-                  const formattedMetricName = metric
-                    .split('_')
-                    .map((word, index) => 
-                      index === 0 
-                        ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() 
-                        : ['auc', 'roc', 'pr'].includes(word.toLowerCase()) 
-                          ? word.toUpperCase() 
-                          : word.toLowerCase()
-                    )
-                    .join(' ');
+          {/* Show training progress */}
+          {isTraining && (
+            <div>
+              <h2>Model Training</h2>
+              <p>Model is training. Please wait... {trainingProgress}% completed</p>
+              <button 
+                onClick={handleStopTraining}
+                className="stop-training-button"
+              >
+                Stop Training
+              </button>
+            </div>
+          )}
 
-                  return (
-                    <tr key={metric}>
-                      <td>{formattedMetricName}</td>
-                      <td>{trainValue.toFixed(4)}</td>
-                      <td>{validationValue.toFixed(4)}</td>
-                      <td>{testValue.toFixed(4)}</td>
-                    </tr>
-                  );
-                }
-                return null;
-              })}
-            </tbody>
-          </table>
+          {/* Show results */}
+          {!isTraining && modelResults && (
+            <div>
+              <h2>Model Results</h2>
+              <p className="iterations-info">
+                Best of {trainedModels.length} models (iteration {modelResults.bestModelIteration})
+              </p>
+              <table className="results-table">
+                <thead>
+                  <tr>
+                    <th>Metric</th>
+                    <th>Train</th>
+                    <th>Validation</th>
+                    <th>Test</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Loss</td>
+                    <td>{modelResults.train.loss.toFixed(4)}</td>
+                    <td>{modelResults.validation.loss.toFixed(4)}</td>
+                    <td>{modelResults.test.loss.toFixed(4)}</td>
+                  </tr>
+                  {[primaryMetric, ...secondaryMetrics].map((metric) => {
+                    const trainValue = modelResults.train[metric.toUpperCase()];
+                    const validationValue = modelResults.validation[metric.toUpperCase()];
+                    const testValue = modelResults.test[metric.toUpperCase()];
+                    
+                    if (trainValue !== undefined && validationValue !== undefined && testValue !== undefined) {
+                      const formattedMetricName = metric
+                        .split('_')
+                        .map((word, index) => 
+                          index === 0 
+                            ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() 
+                            : ['auc', 'roc', 'pr'].includes(word.toLowerCase()) 
+                              ? word.toUpperCase() 
+                              : word.toLowerCase()
+                        )
+                        .join(' ');
+
+                      return (
+                        <tr key={metric}>
+                          <td>{formattedMetricName}</td>
+                          <td>{trainValue.toFixed(4)}</td>
+                          <td>{validationValue.toFixed(4)}</td>
+                          <td>{testValue.toFixed(4)}</td>
+                        </tr>
+                      );
+                    }
+                    return null;
+                  })}
+                </tbody>
+              </table>
+              <button 
+                onClick={handleSaveModel}
+                className="save-model-button"
+              >
+                Save Model
+              </button>
+              {showSaveDialog && (
+                <SaveModelDialog
+                  model={bestModel}
+                  modelResults={modelResults}
+                  config={{
+                    targetType,
+                    primaryMetric,
+                    secondaryMetrics,
+                    l1_penalty,
+                    dropout_rate,
+                    batchSize,
+                    epochs,
+                    earlyStoppingEnabled,
+                    learningRate,
+                    autoHiddenDim,
+                    hiddenDimInput,
+                    seed,
+                    // Add any other relevant configuration
+                  }}
+                  onClose={handleSaveDialogClose}
+                />
+              )}
+            </div>
+          )}
         </div>
-      )}
-      {processedData && (
-        <Accordion title="Preprocessed Data Preview">
-          <DataPreview 
-            data={[
-              ...processedData.trainData,
-              ...processedData.validationData,
-              ...processedData.testData
-            ]}
-            columns={processedData.updatedColumns}
-            showDownload={true}
-            originalFileName={fileName}
-          />
-        </Accordion>
-      )}
+
+        {/* Right Panel */}
+        <div className="right-panel">
+          {parsedData ? (
+            <>
+              <Accordion 
+                title="Data Preview" 
+                defaultOpen={dataPreviewOpen}
+                isOpen={dataPreviewOpen}
+                onToggle={setDataPreviewOpen}
+              >
+                <DataPreview 
+                  data={parsedData} 
+                  columns={Object.keys(parsedData[0])}
+                />
+              </Accordion>
+              {processedData && (
+                <Accordion 
+                  title="Preprocessed Data Preview"
+                  defaultOpen={processedDataPreviewOpen}
+                  isOpen={processedDataPreviewOpen}
+                  onToggle={setProcessedDataPreviewOpen}
+                >
+                  <DataPreview 
+                    data={[
+                      ...processedData.trainData,
+                      ...processedData.validationData,
+                      ...processedData.testData
+                    ]}
+                    columns={processedData.updatedColumns}
+                    showDownload={true}
+                    originalFileName={fileName}
+                  />
+                </Accordion>
+              )}
+              {bestModel && (
+                <Accordion 
+                  title="Model Architecture"
+                  defaultOpen={modelArchitectureOpen}
+                  isOpen={modelArchitectureOpen}
+                  onToggle={setModelArchitectureOpen}
+                >
+                  <ModelArchitectureDisplay
+                    model={bestModel}
+                    config={{
+                      autoHiddenDim,
+                      hiddenDimInput,
+                      learningRate,
+                      batchSize,
+                      l1_penalty,
+                      dropoutRate: dropout_rate,
+                      earlyStoppingEnabled
+                    }}
+                    featureCount={processedData.updatedColumns.filter(col => 
+                      col !== targetColumn && col !== 'split'
+                    ).length}
+                  />
+                </Accordion>
+              )}
+            </>
+          ) : (
+            <SavedModelsList />
+          )}
+        </div>
+      </div>
     </div>
   );
 }

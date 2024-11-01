@@ -10,3 +10,5 @@ This project is in early development. Current functionality includes:
 - Basic data preprocessing (categorical feature encoding, missing value imputation, scaling)
 - Training a regression or classification model
 - Displaying some performance metrics
+- Automated hyperparameter tuning
+- Save trained models in browser storage

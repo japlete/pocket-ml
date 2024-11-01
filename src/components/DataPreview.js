@@ -23,23 +23,20 @@ function DataPreview({ data, columns, showDownload = false, originalFileName = '
 
   const formatValue = (value) => {
     if (typeof value === 'number') {
-      return value.toPrecision(3); // Display 3 significant digits for numbers
+      return value.toPrecision(3);
     }
     return value === null ? 'null' : value;
   };
 
   const handleDownload = () => {
-    // Generate download filename based on original filename if available
     const downloadFileName = originalFileName ? 
       originalFileName.replace('.csv', '_preprocessed.csv') : 
       'preprocessed_data.csv';
 
-    // Convert data to CSV
     const csvContent = [
-      columns.join(','), // Header row
+      columns.join(','),
       ...data.map(row => columns.map(col => {
         const value = row[col];
-        // Handle values that might need escaping
         if (typeof value === 'string' && value.includes(',')) {
           return `"${value}"`;
         }
@@ -47,7 +44,6 @@ function DataPreview({ data, columns, showDownload = false, originalFileName = '
       }).join(','))
     ].join('\n');
 
-    // Create and trigger download
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
@@ -65,28 +61,30 @@ function DataPreview({ data, columns, showDownload = false, originalFileName = '
           Download CSV
         </button>
       )}
-      <table>
-        <thead>
-          <tr>
-            {columns.map((header) => (
-              <th key={header}>
-                {header}
-                <br />
-                <small>({getColumnType(header)})</small>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.slice(0, 5).map((row, index) => (
-            <tr key={index}>
+      <div className="table-container">
+        <table>
+          <thead>
+            <tr>
               {columns.map((header) => (
-                <td key={`${index}-${header}`}>{formatValue(row[header])}</td>
+                <th key={header}>
+                  {header}
+                  <br />
+                  <small>({getColumnType(header)})</small>
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {data.slice(0, 5).map((row, index) => (
+              <tr key={index}>
+                {columns.map((header) => (
+                  <td key={`${index}-${header}`}>{formatValue(row[header])}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
