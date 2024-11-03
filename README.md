@@ -12,3 +12,11 @@ This project is in early development. Current functionality includes:
 - Displaying some performance metrics
 - Automated hyperparameter tuning
 - Save trained models in browser storage
+
+## Planned Features
+
+- Prediction from saved models
+- Feature importances in results
+- More model types (e.g. time series forecasting)
+- Multiclass metrics
+- Preprocessing and hypertuning with spline transformations
