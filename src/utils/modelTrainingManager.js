@@ -39,18 +39,16 @@ export class ModelTrainingManager {
     this.tensorData = null;
     this.abortController = null;
     this.lastTrainedEpochs = 0;
+    this.bestModelIteration = null;
   }
 
-  async startTrainingCycle(trainData, validationData, testData, onProgressUpdate) {
+  async startTrainingCycle(trainData, validationData, testData, onProgressUpdate, onIterationComplete) {
     this.isTraining = true;
     this.startTime = Date.now();
     this.abortController = new AbortController();
     
-    // Prepare tensors once at the start with the correct configuration
     this.tensorData = prepareDataTensors(
-      trainData, 
-      validationData, 
-      testData, 
+      trainData, validationData, testData, 
       this.config.targetColumn,
       this.config.featureColumns,
       this.config.targetType
@@ -72,29 +70,28 @@ export class ModelTrainingManager {
           this.getCurrentHyperparameters()
         );
 
-        // Store actual epochs for hyperparameter tuning
         this.lastTrainedEpochs = history.epoch.length;
 
         const trainResults = await this.evaluateModel(model, this.tensorData.train.x, this.tensorData.train.y, false);
-        console.log('Train results:', trainResults);  // Debug log
-        
         const validationResults = await this.evaluateModel(model, this.tensorData.validation.x, this.tensorData.validation.y, false);
-        console.log('Validation results:', validationResults);  // Debug log
 
         const results = {
           train: trainResults,
           validation: validationResults
         };
-        console.log('Combined results:', results);  // Debug log
 
         this.allModels.push({
           iteration: this.currentIteration,
           metrics: results,
           hyperparameters: this.getCurrentHyperparameters()
         });
-        console.log('Latest model metrics:', this.allModels[this.allModels.length - 1].metrics);  // Debug log
 
         this.updateBestModel(model, results);
+        
+        // Call the callback with current models after each iteration
+        if (onIterationComplete) {
+          onIterationComplete(this.allModels, this.bestModelIteration);
+        }
         
         this.currentIteration++;
         
@@ -104,7 +101,6 @@ export class ModelTrainingManager {
 
         this.updateHyperparameters();
         
-        // Continue to next iteration
         setTimeout(trainNextIteration, 0);
       } catch (error) {
         console.error('Training error:', error);
@@ -112,19 +108,16 @@ export class ModelTrainingManager {
       }
     };
 
-    // Start the first iteration
     await trainNextIteration();
     
-    // Wait for training to complete
     return new Promise((resolve) => {
       const checkCompletion = () => {
         if (!this.isTraining) {
           resolve({
             bestModel: this.bestModel,
-            trainedModels: this.allModels.sort((a, b) => 
-              this.compareMetrics(b.metrics.validation, a.metrics.validation)
-            ),
+            trainedModels: this.allModels,
             finalMetrics: this.finalMetrics,
+            bestModelIteration: this.bestModelIteration,
             completedIterations: this.currentIteration
           });
         } else {
@@ -133,7 +126,7 @@ export class ModelTrainingManager {
       };
       checkCompletion();
     });
-  }
+  };
 
   stopTraining() {
     if (this.abortController) {
@@ -209,6 +202,7 @@ export class ModelTrainingManager {
     if (!this.bestModel || this.isBetterModel(results)) {
       this.bestModel = model;
       this.bestMetrics = results;
+      this.bestModelIteration = this.currentIteration + 1; // Store the iteration when we find a better model
     }
   }
 

@@ -1,5 +1,4 @@
 import * as tf from '@tensorflow/tfjs';
-//import { calculateMetrics } from './modelMetrics';
 import seedrandom from 'seedrandom';
 
 // Custom Callback class for logging
@@ -34,7 +33,6 @@ class LoggingCallback extends tf.Callback {
 }
 
 export async function trainModel(tensorData, targetType, onProgressUpdate, config) {
-
   const { x: trainX, y: trainY } = tensorData.train;
   const { x: validationX, y: validationY } = tensorData.validation;
 
@@ -65,8 +63,9 @@ export async function trainModel(tensorData, targetType, onProgressUpdate, confi
   const input = tf.input({shape: [trainX.shape[1]]});
 
   // Add L1 regularization if specified
-  let first_layer_args = {units: hidden_dim, 
-    activation: 'gelu_new', 
+  let first_layer_args = {
+    units: hidden_dim, 
+    activation: 'relu', 
     kernelInitializer: tf.initializers.glorotNormal({seed: seed+1})
   };
   if (l1Penalty) {
@@ -90,7 +89,7 @@ export async function trainModel(tensorData, targetType, onProgressUpdate, confi
     }
     const dense = tf.layers.dense({
       units: next_hidden_dim, 
-      activation: 'gelu_new', 
+      activation: 'relu', 
       kernelInitializer: tf.initializers.glorotNormal({seed: seed+residual_concat.length})
     }).apply(prev_layer);
     prev_layer = dense;
@@ -130,7 +129,7 @@ export async function trainModel(tensorData, targetType, onProgressUpdate, confi
   const numParams = model.countParams();
   console.log('Number of parameters:', numParams);
 
-  // Compile the model - simplified, only with loss
+  // Compile the model
   const optimizer = tf.train.adam(learningRate);
   let loss;
 
@@ -155,7 +154,7 @@ export async function trainModel(tensorData, targetType, onProgressUpdate, confi
     callbacks.push(tf.callbacks.earlyStopping({
       monitor: 'val_loss',
       patience: 3,
-      verbose: 1 // Add verbose logging
+      verbose: 1
     }));
   }
 

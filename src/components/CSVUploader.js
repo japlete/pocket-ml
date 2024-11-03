@@ -21,7 +21,8 @@ function CSVUploader({ onDataParsed }) {
   };
 
   return (
-    <div>
+    <div className="csv-uploader">
+      <p className="upload-prompt">Select a table in CSV format to get started</p>
       <input type="file" accept=".csv" onChange={handleFileChange} />
       <button onClick={handleUpload} disabled={!file}>
         Read CSV

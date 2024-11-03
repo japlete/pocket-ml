@@ -13,6 +13,7 @@ import SaveModelDialog from './components/SaveModelDialog';
 import SavedModelsList from './components/SavedModelsList';
 import ModelArchitectureDisplay from './components/ModelArchitectureDisplay';
 import './index.css';
+import { LinearProgress, Box, Typography } from '@mui/material';
 
 function App() {
   const [parsedData, setParsedData] = useState(null);
@@ -49,6 +50,7 @@ function App() {
   const [dataPreviewOpen, setDataPreviewOpen] = useState(true);
   const [processedDataPreviewOpen, setProcessedDataPreviewOpen] = useState(true);
   const [modelArchitectureOpen, setModelArchitectureOpen] = useState(true);
+  const [isStopping, setIsStopping] = useState(false);
 
   const handleDataParsed = (data, name) => {
     setParsedData(data);
@@ -149,6 +151,7 @@ function App() {
 
   const handleStartTraining = async () => {
     setIsTraining(true);
+    setIsStopping(false);
     setTrainingProgress(0);
     setDataPreviewOpen(false);
     setProcessedDataPreviewOpen(true);
@@ -192,20 +195,18 @@ function App() {
           preprocessedData.testData,
           (epoch, totalEpochs) => {
             setTrainingProgress(Math.round((epoch / totalEpochs) * 100));
+          },
+          (currentModels, bestIteration) => {
+            setTrainedModels(currentModels);
           }
         );
 
-        // Only update states if we have results (training wasn't aborted)
         if (results) {
           setTrainedModels(results.trainedModels);
-          setModelResults(results.finalMetrics);
           setBestModel(results.bestModel);
-          const bestModelIteration = results.trainedModels.findIndex(model => 
-            model.metrics.validation[primaryMetric.toUpperCase()] === results.finalMetrics.validation[primaryMetric.toUpperCase()]
-          ) + 1;
           setModelResults({
             ...results.finalMetrics,
-            bestModelIteration
+            bestModelIteration: results.bestModelIteration
           });
           setDataPreviewOpen(false);
           setProcessedDataPreviewOpen(false);
@@ -216,6 +217,7 @@ function App() {
         // Handle error appropriately
       } finally {
         setIsTraining(false);
+        setIsStopping(false);
       }
     }
   };
@@ -243,12 +245,8 @@ function App() {
 
   const handleStopTraining = async () => {
     if (trainingManager) {
-      // Don't reset isTraining state here - wait for results
+      setIsStopping(true);
       trainingManager.stopTraining();
-      
-      // The training manager will finish the current iteration and compute final metrics
-      // We don't need to do anything else here as the startTrainingCycle promise
-      // will resolve with the results, which are handled in handleStartTraining
     }
   };
 
@@ -266,9 +264,45 @@ function App() {
 
   const columns = parsedData ? Object.keys(parsedData[0]) : [];
 
+  const getTimeProgress = () => {
+    if (!trainingManager?.startTime) return 0;
+    const elapsed = (Date.now() - trainingManager.startTime) / 1000; // in seconds
+    const maxTime = maxTrainingTime * 60; // convert minutes to seconds
+    return Math.min((elapsed / maxTime) * 100, 100);
+  };
+
+  const getIterationProgress = () => {
+    if (!trainedModels.length) return 0;
+    return Math.min((trainedModels.length / minIterations) * 100, 100);
+  };
+
   return (
     <div className="App">
       <h1>Pocket ML</h1>
+      
+      {/* Add welcome section when no data is loaded */}
+      {!parsedData && (
+        <div className="welcome-section">
+          <p className="welcome-text">
+            Train machine learning models directly in your browser
+          </p>
+          <div className="key-features">
+            <div className="feature">
+              <h3>No Setup Required</h3>
+              <p>Start immediately without installation or programming skills</p>
+            </div>
+            <div className="feature">
+              <h3>100% Private</h3>
+              <p>Your data never leaves your device - all processing happens locally</p>
+            </div>
+            <div className="feature">
+              <h3>Completely Free</h3>
+              <p>Open source and free to use, no account needed</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="panel-container">
         {/* Left Panel */}
         <div className="left-panel">
@@ -343,15 +377,80 @@ function App() {
 
           {/* Show training progress */}
           {isTraining && (
-            <div>
+            <div className="training-status">
               <h2>Model Training</h2>
-              <p>Model is training. Please wait... {trainingProgress}% completed</p>
-              <button 
-                onClick={handleStopTraining}
-                className="stop-training-button"
-              >
-                Stop Training
-              </button>
+              
+              <div className="progress-section">
+                <div className="progress-item">
+                  <Typography className="progress-label">
+                    Time: {Math.round(getTimeProgress())}% of max {maxTrainingTime} minutes
+                  </Typography>
+                  <LinearProgress 
+                    variant="determinate" 
+                    value={getTimeProgress()} 
+                    className="progress-bar time"
+                  />
+                </div>
+
+                <div className="progress-item">
+                  <Typography className="progress-label">
+                    Iterations: {trainedModels.length} of min {minIterations}
+                  </Typography>
+                  <LinearProgress 
+                    variant="determinate" 
+                    value={getIterationProgress()} 
+                    className="progress-bar iterations"
+                  />
+                </div>
+
+                <div className="progress-item">
+                  <Typography className="progress-label">
+                    Current Model: {trainingProgress}% complete
+                  </Typography>
+                  <LinearProgress 
+                    variant="determinate" 
+                    value={trainingProgress} 
+                    className="progress-bar current"
+                  />
+                </div>
+
+                <div className="status-info">
+                  <Typography variant="body2" className="info-text">
+                    Training model {trainedModels.length + 1}
+                    {trainedModels.length > 0 && trainedModels[0].metrics?.validation && 
+                      ` • Best validation ${primaryMetric}: ${
+                        trainedModels
+                          .reduce((best, current) => {
+                            const metricKey = primaryMetric.toUpperCase();
+                            const currentMetric = current.metrics.validation[metricKey];
+                            const bestMetric = best.metrics.validation[metricKey];
+                            
+                            const higherIsBetter = !['rmse', 'mse', 'mae', 'mape'].includes(primaryMetric.toLowerCase());
+                            
+                            return higherIsBetter ? 
+                              (currentMetric > bestMetric ? current : best) : 
+                              (currentMetric < bestMetric ? current : best);
+                          }, trainedModels[0])
+                          .metrics.validation[primaryMetric.toUpperCase()]
+                          .toFixed(4)
+                      }`
+                    }
+                  </Typography>
+                </div>
+              </div>
+
+              {isStopping ? (
+                <div className="stopping-message">
+                  Stopping training. Waiting for the last model to finish...
+                </div>
+              ) : (
+                <button 
+                  onClick={handleStopTraining}
+                  className="stop-training-button"
+                >
+                  Stop Training
+                </button>
+              )}
             </div>
           )}
 

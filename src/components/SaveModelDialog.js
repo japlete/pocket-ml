@@ -25,21 +25,29 @@ function SaveModelDialog({ model, modelResults, config, onClose }) {
         return;
       }
 
+      // Get the number of epochs trained from model history
+      const epochsTrained = model.history?.epoch?.length || 0;
+
       // Prepare model data for saving
       const modelData = {
         name: modelName,
-        model: await model.save(`indexeddb://${modelName}`), // Save model architecture and weights
+        model: await model.save(`indexeddb://${modelName}`),
         results: modelResults,
-        config: config,
+        config: {
+          ...config,
+          dropoutRate: config.dropoutRate || config.dropout_rate // Handle both naming conventions
+        },
         metadata: {
           savedAt: new Date().toISOString(),
           targetType: config.targetType,
           primaryMetric: config.primaryMetric,
+          featureCount: model.inputs[0].shape[1],
+          epochsTrained: epochsTrained // Save epochs trained in metadata
         }
       };
 
       await saveModel(modelData);
-      onClose(true); // Close with success
+      onClose(true);
     } catch (err) {
       console.error('Error saving model:', err);
       setError('Failed to save model: ' + err.message);
