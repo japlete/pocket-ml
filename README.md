@@ -20,3 +20,4 @@ This project is in early development. Current functionality includes:
 - More model types (e.g. time series forecasting)
 - Multiclass metrics
 - Preprocessing and hypertuning with spline transformations
+- More missing value imputation methods
