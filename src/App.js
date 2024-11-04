@@ -14,6 +14,7 @@ import SavedModelsList from './components/SavedModelsList';
 import ModelArchitectureDisplay from './components/ModelArchitectureDisplay';
 import './index.css';
 import { LinearProgress, Box, Typography } from '@mui/material';
+import githubIcon from './assets/icons/github-mark-white.svg';
 
 function App() {
   const [parsedData, setParsedData] = useState(null);
@@ -603,6 +604,16 @@ function App() {
           )}
         </div>
       </div>
+
+      {/* Add the footer at the bottom of the App component, after the panel-container div */}
+      <footer className="footer">
+        <p>
+          © {new Date().getFullYear()} José A Poblete
+          <a href="https://github.com/japlete/pocket-ml" target="_blank" rel="noopener noreferrer">
+            <img src={githubIcon} alt="GitHub" className="footer-icon" />
+          </a>
+        </p>
+      </footer>
     </div>
   );
 }

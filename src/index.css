@@ -52,6 +52,9 @@ code {
   margin: 0 auto;
   padding: var(--spacing-lg);
   overflow-x: hidden;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -176,6 +179,7 @@ th small {
 
 /* Panels */
 .panel-container {
+  flex: 1;
   display: flex;
   gap: var(--spacing-lg);
   margin-top: var(--spacing-lg);
@@ -764,4 +768,34 @@ th small {
   border-radius: var(--radius-md);
   font-size: 0.9rem;
   text-align: center;
+}
+
+/* Add these styles at the end of the file */
+
+/* Footer styles */
+.footer {
+  text-align: center;
+  padding: var(--spacing-lg) 0;
+  margin-top: var(--spacing-xl);
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.footer p {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-md);
+}
+
+.footer-icon {
+  width: 20px;
+  height: 20px;
+  opacity: 0.7;
+  transition: opacity var(--transition-fast);
+}
+
+.footer-icon:hover {
+  opacity: 1;
 }
