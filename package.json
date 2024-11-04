@@ -1,6 +1,7 @@
 {
   "name": "pocket-ml",
   "version": "1.0.0",
+  "homepage": "https://japlete.github.io/pocket-ml",
   "dependencies": {
     "@emotion/react": "^11.11.3",
     "@emotion/styled": "^11.11.0",
@@ -20,6 +21,8 @@
     "util": "^0.12.5"
   },
   "scripts": {
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d build",
     "start": "react-app-rewired start",
     "build": "react-app-rewired build",
     "test": "react-app-rewired test",
@@ -40,6 +43,7 @@
   "devDependencies": {
     "assert": "^2.1.0",
     "buffer": "^6.0.3",
+    "gh-pages": "^6.2.0",
     "process": "^0.11.10",
     "react-app-rewired": "^2.2.1"
   },
