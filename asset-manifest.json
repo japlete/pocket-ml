@@ -1,0 +1,13 @@
+{
+  "files": {
+    "main.css": "/pocket-ml/static/css/main.2457ba16.css",
+    "main.js": "/pocket-ml/static/js/main.016ad33b.js",
+    "index.html": "/pocket-ml/index.html",
+    "main.2457ba16.css.map": "/pocket-ml/static/css/main.2457ba16.css.map",
+    "main.016ad33b.js.map": "/pocket-ml/static/js/main.016ad33b.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.2457ba16.css",
+    "static/js/main.016ad33b.js"
+  ]
+}
