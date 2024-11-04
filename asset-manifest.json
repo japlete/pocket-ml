@@ -1,13 +1,14 @@
 {
   "files": {
-    "main.css": "/pocket-ml/static/css/main.2457ba16.css",
-    "main.js": "/pocket-ml/static/js/main.016ad33b.js",
+    "main.css": "/pocket-ml/static/css/main.ac55f5e5.css",
+    "main.js": "/pocket-ml/static/js/main.cf8813e6.js",
+    "static/media/github-mark-white.svg": "/pocket-ml/static/media/github-mark-white.97ed8e7eef60d61ca469881dd6f34511.svg",
     "index.html": "/pocket-ml/index.html",
-    "main.2457ba16.css.map": "/pocket-ml/static/css/main.2457ba16.css.map",
-    "main.016ad33b.js.map": "/pocket-ml/static/js/main.016ad33b.js.map"
+    "main.ac55f5e5.css.map": "/pocket-ml/static/css/main.ac55f5e5.css.map",
+    "main.cf8813e6.js.map": "/pocket-ml/static/js/main.cf8813e6.js.map"
   },
   "entrypoints": [
-    "static/css/main.2457ba16.css",
-    "static/js/main.016ad33b.js"
+    "static/css/main.ac55f5e5.css",
+    "static/js/main.cf8813e6.js"
   ]
 }
