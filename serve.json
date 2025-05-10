@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/pocket-ml/**", "destination": "/$1" },
+    { "source": "/**", "destination": "/index.html" }
+  ]
+} 

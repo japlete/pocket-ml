@@ -19,5 +19,16 @@ module.exports = function override(config, env) {
     }),
   ];
 
+  // Add devServer configuration to fix deprecation warnings
+  if (env === 'development') {
+    config.devServer = {
+      ...config.devServer,
+      setupMiddlewares: (middlewares, devServer) => {
+        // Your middleware setup code here (if any)
+        return middlewares;
+      }
+    };
+  }
+
   return config;
 };
